@@ -33,7 +33,11 @@ function App() {
   const [qrLoading, setQrLoading] = useState(false);
   const [narrationNotice, setNarrationNotice] = useState("");
   const [qrImage, setQrImage] = useState("");
+  const [autoNarration, setAutoNarration] = useState(false);
+  const [autoMessage, setAutoMessage] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playingRef = useRef(false);
+  const cooldownRef = useRef(new Map<string, number>());
   useEffect(() => { loadPois().then(setPois); }, []);
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("qr");
@@ -69,6 +73,7 @@ function App() {
   };
   const playNarration = async (poi: Poi, nextPlaying: boolean, source = "MANUAL") => {
     setPlaying(nextPlaying);
+    playingRef.current = nextPlaying;
     if (!nextPlaying) {
       audioRef.current?.pause();
       window.speechSynthesis.cancel();
@@ -98,6 +103,35 @@ function App() {
     utterance.onerror = () => { setPlaying(false); setNarrationNotice("Không thể phát thuyết minh trên thiết bị này."); };
     window.speechSynthesis.speak(utterance);
   };
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+  useEffect(() => {
+    if (!autoNarration) return;
+    if (!navigator.geolocation) {
+      setAutoMessage("Thiết bị không hỗ trợ định vị GPS.");
+      setAutoNarration(false);
+      return;
+    }
+    setAutoMessage("Đang theo dõi vị trí. Hãy cho phép GPS trên trình duyệt.");
+    const watchId = navigator.geolocation.watchPosition(async ({ coords }) => {
+      try {
+        const response = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}`);
+        if (!response.ok) throw new Error("Không thể tải POI gần vị trí");
+        const candidates: Poi[] = await response.json();
+        const now = Date.now();
+        const candidate = candidates.find((poi) => (poi.distance_m ?? Infinity) <= poi.radius_m && now - (cooldownRef.current.get(poi.id) || 0) >= 5 * 60 * 1000);
+        if (!candidate || playingRef.current) return;
+        cooldownRef.current.set(candidate.id, now);
+        setSelected(candidate);
+        setAutoMessage(`Đã phát tự động: ${candidate.translation.name}`);
+        await playNarration(candidate, true, "GPS");
+      } catch (error) {
+        setAutoMessage(error instanceof Error ? error.message : "Không thể kiểm tra geofence");
+      }
+    }, () => setAutoMessage("Chưa được cấp quyền GPS. Bạn vẫn có thể nghe thủ công hoặc quét QR."), { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [autoNarration]);
   const locate = () => {
     setLocating(true);
     navigator.geolocation?.getCurrentPosition(async ({ coords }) => { try { const res = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}`); setNearby(res.ok ? await res.json() : []); } catch { setNearby([]); } finally { setLocating(false); } }, () => setLocating(false));
@@ -106,7 +140,7 @@ function App() {
   return <div className="app">
     <header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div><nav><button className={view === "explore" ? "active" : ""} onClick={() => setView("explore")}><Compass size={16}/> Khám phá</button><button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><ShieldCheck size={16}/> CMS quản trị</button></nav><button className="menu" onClick={() => setMenuOpen(!menuOpen)}><Menu/></button></header>
     {view === "admin" ? <Admin pois={pois} setPois={setPois} onBack={() => setView("explore")} /> : <main>
-      <section className="hero"><div><p className="eyebrow"><Sparkles size={14}/> CITYECHO · SGU COLLECTION</p><h1>Đi chậm lại.<br/><em>Nghe thành phố kể.</em></h1><p className="hero-copy">Khám phá những câu chuyện văn hóa, lịch sử quanh Sài Gòn qua bản đồ tương tác và thuyết minh thông minh.</p><div className="hero-actions"><button className="primary" onClick={locate}><LocateFixed size={17}/> {locating ? "Đang tìm vị trí..." : "Tìm địa điểm quanh tôi"}</button><button className="secondary" onClick={() => document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" })}>Xem tất cả POI <ArrowLeft size={16} className="rotate"/></button></div></div><div className="hero-art"><div className="sun"/><div className="hero-card"><MapPin size={18}/><span>10.7591° N<br/><b>106.6823° E</b></span></div><div className="hero-label">SÀI GÒN<br/><strong>DI SẢN SỐ</strong></div></div></section>
+      <section className="hero"><div><p className="eyebrow"><Sparkles size={14}/> CITYECHO · SGU COLLECTION</p><h1>Đi chậm lại.<br/><em>Nghe thành phố kể.</em></h1><p className="hero-copy">Khám phá những câu chuyện văn hóa, lịch sử quanh Sài Gòn qua bản đồ tương tác và thuyết minh thông minh.</p><div className="hero-actions"><button className="primary" onClick={locate}><LocateFixed size={17}/> {locating ? "Đang tìm vị trí..." : "Tìm địa điểm quanh tôi"}</button><button className={`secondary gps-toggle ${autoNarration ? "enabled" : ""}`} onClick={() => setAutoNarration((value) => !value)}><Headphones size={16}/> {autoNarration ? "Tắt thuyết minh GPS" : "Bật thuyết minh GPS"}</button><button className="secondary" onClick={() => document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" })}>Xem tất cả POI <ArrowLeft size={16} className="rotate"/></button></div>{autoMessage && <p className="gps-message">{autoMessage}</p>}</div><div className="hero-art"><div className="sun"/><div className="hero-card"><MapPin size={18}/><span>10.7591° N<br/><b>106.6823° E</b></span></div><div className="hero-label">SÀI GÒN<br/><strong>DI SẢN SỐ</strong></div></div></section>
       {nearby.length > 0 && <section className="nearby"><b><LocateFixed size={16}/> {nearby.length} địa điểm gần bạn</b><span>Đã sắp xếp theo ưu tiên và khoảng cách</span><button onClick={() => setNearby([])}><X size={16}/></button></section>}
       <section className="explore" id="poi-list"><div className="section-head"><div><p className="eyebrow">BẢN ĐỒ CÂU CHUYỆN</p><h2>Chọn một điểm để bắt đầu</h2></div><div className="filters"><div className="search"><Search size={17}/><input placeholder="Tìm kiếm địa điểm..." value={query} onChange={(e) => setQuery(e.target.value)}/></div><select value={category} onChange={(e) => setCategory(e.target.value)}>{categories.map((c) => <option key={c} value={c}>{c === "all" ? "Tất cả danh mục" : c}</option>)}</select></div></div><div className="content-grid"><div className="map-panel"><div className="map-grid"/>{visible.map((poi, index) => <button key={poi.id} className={`map-pin pin-${index + 1} ${selected?.id === poi.id ? "chosen" : ""}`} onClick={() => setSelected(poi)}><MapPin size={21}/><span>{index + 1}</span></button>)}<div className="map-controls"><button onClick={locate}><LocateFixed size={17}/></button><button onClick={() => setSelected(null)}>＋</button></div><div className="map-legend"><span className="legend-dot"/><span>Điểm đã xuất bản</span></div></div><div className="poi-list">{visible.map((poi) => <article className={`poi-card ${selected?.id === poi.id ? "selected" : ""}`} key={poi.id} onClick={() => setSelected(poi)}><img src={poi.image_url} alt=""/><div className="poi-body"><div className="poi-top"><span className="tag">{poi.category}</span><span className="poi-number">0{visible.indexOf(poi) + 1}</span></div><h3>{poi.translation.name}</h3><p>{poi.translation.description}</p><div className="poi-meta"><span><Headphones size={14}/> Thuyết minh</span><span><QrCode size={14}/> QR</span></div></div></article>)}</div></div></section>
       {selected && <aside className="detail-drawer"><button className="close" onClick={() => setSelected(null)}><X/></button><img src={selected.image_url} alt=""/><div className="drawer-content"><span className="tag">{selected.category}</span><h2>{selected.translation.name}</h2><p>{selected.translation.description}</p><div className="audio-box"><div className="audio-icon"><Headphones/></div><div><b>Thuyết minh tiếng Việt</b><small>{selected.audio_url ? "Audio file · 01:12" : "Đọc tự động bằng trình duyệt"}</small></div><button className="play" onClick={() => playNarration(selected, !playing)}>{playing ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => playNarration(selected, true)}>{playing ? "Đang phát thuyết minh..." : "Nghe câu chuyện"}</button>{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<div className="coordinates"><MapPin size={16}/> {selected.latitude.toFixed(4)}° N · {selected.longitude.toFixed(4)}° E <span>QR: {selected.qr_code}</span></div>{qrImage && <div className="qr-download"><img src={qrImage} alt={`QR Code ${selected.translation.name}`}/><div><b>QR Code thuyết minh</b><small>Quét để mở không cần GPS</small><a href={qrImage} download={`cityecho-${selected.id}-qr.png`}>Tải QR để in</a></div></div>}</div></aside>}

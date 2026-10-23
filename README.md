@@ -39,6 +39,7 @@ docker compose up --build
 
 - `GET /api/v1/pois`: POI đã xuất bản, tìm kiếm và lọc.
 - `GET /api/v1/pois/nearby?lat=...&lng=...`: POI gần vị trí theo Haversine.
+- `GET /api/v1/geofence/evaluate?lat=...&lng=...`: chọn POI nằm trong geofence để kích hoạt narration.
 - `GET /api/v1/qr/{code}`: mở POI từ QR.
 - `POST /api/v1/narration-events`: ghi nhận lượt nghe.
 - `POST /api/v1/admin/pois/{id}/submit|approve|request-revision|archive`: workflow xuất bản.
@@ -53,6 +54,13 @@ docker compose up --build
 4. Chọn **Chỉnh sửa** ở bảng POI để cập nhật nội dung, tọa độ, geofence hoặc độ ưu tiên.
 5. Editor có thể gửi POI bản nháp để duyệt; Admin có thể xuất bản, yêu cầu chỉnh sửa hoặc lưu trữ.
 6. Trên trang khám phá, mở một POI và bấm **Nghe câu chuyện**. API sẽ nhận sự kiện `MANUAL/start`; bấm nút tạm dừng/kết thúc sẽ gửi `MANUAL/finish`.
+
+## Kiểm thử thuyết minh tự động bằng GPS
+
+1. Mở trang khám phá trên HTTPS hoặc `localhost`.
+2. Bấm **Bật thuyết minh GPS** và cho phép quyền vị trí.
+3. Khi vị trí nằm trong bán kính geofence của POI, CityEcho chọn POI ưu tiên cao nhất và phát narration với nguồn `GPS`.
+4. Mỗi POI có cooldown 5 phút để không tự phát lặp. Nút nghe thủ công và QR vẫn hoạt động độc lập.
 
 ## Mở POI bằng QR
 

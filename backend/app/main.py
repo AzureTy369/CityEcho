@@ -259,14 +259,6 @@ def list_pois(
     return {"items": items[start : start + limit], "page": page, "limit": limit, "total": len(items)}
 
 
-@app.get("/api/v1/pois/{poi_id}")
-def get_poi(poi_id: str):
-    poi = POIS.get(poi_id)
-    if not poi or poi.status != PoiStatus.PUBLISHED:
-        raise HTTPException(status_code=404, detail="Không tìm thấy địa điểm")
-    return poi
-
-
 @app.get("/api/v1/pois/nearby")
 def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
     result = []
@@ -277,6 +269,20 @@ def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-1
         if item.distance_m <= 5000:
             result.append(item)
     return sorted(result, key=lambda p: (-p.priority, p.distance_m or 0))
+
+
+@app.get("/api/v1/geofence/evaluate")
+def evaluate_geofence(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
+    candidates = [poi for poi in nearby(lat, lng) if (poi.distance_m or 0) <= poi.radius_m]
+    return {"candidate": candidates[0] if candidates else None, "candidates": candidates}
+
+
+@app.get("/api/v1/pois/{poi_id}")
+def get_poi(poi_id: str):
+    poi = POIS.get(poi_id)
+    if not poi or poi.status != PoiStatus.PUBLISHED:
+        raise HTTPException(status_code=404, detail="Không tìm thấy địa điểm")
+    return poi
 
 
 @app.get("/api/v1/qr/{code}")
