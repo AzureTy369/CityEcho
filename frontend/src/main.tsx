@@ -27,16 +27,32 @@ function App() {
   const [playing, setPlaying] = useState(false);
   const [view, setView] = useState<"explore" | "admin">("explore");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [qrPoi, setQrPoi] = useState<Poi | null>(null);
+  const [qrError, setQrError] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
   useEffect(() => { loadPois().then(setPois); }, []);
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("qr");
+    if (!code) return;
+    setQrLoading(true);
+    fetch(`${API}/api/v1/qr/${encodeURIComponent(code)}`)
+      .then((response) => {
+        if (!response.ok) throw new Error("QR Code không hợp lệ hoặc POI chưa xuất bản");
+        return response.json();
+      })
+      .then(setQrPoi)
+      .catch((error) => setQrError(error instanceof Error ? error.message : "Không thể mở QR Code"))
+      .finally(() => setQrLoading(false));
+  }, []);
   const categories = useMemo(() => ["all", ...Array.from(new Set(pois.map((p) => p.category)))], [pois]);
   const visible = pois.filter((p) => (category === "all" || p.category === category) && p.translation.name.toLowerCase().includes(query.toLowerCase()));
-  const playNarration = async (poi: Poi, nextPlaying: boolean) => {
+  const playNarration = async (poi: Poi, nextPlaying: boolean, source = "MANUAL") => {
     setPlaying(nextPlaying);
     try {
       await fetch(`${API}/api/v1/narration-events`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ poi_id: poi.id, source: "MANUAL", event_type: nextPlaying ? "start" : "finish", duration_seconds: nextPlaying ? 0 : 72, completed: !nextPlaying, session_id: sessionStorage.getItem("cityecho-session") || "web-demo" }),
+        body: JSON.stringify({ poi_id: poi.id, source, event_type: nextPlaying ? "start" : "finish", duration_seconds: nextPlaying ? 0 : 72, completed: !nextPlaying, session_id: sessionStorage.getItem("cityecho-session") || "web-demo" }),
       });
     } catch { /* Listening remains usable when analytics is unavailable. */ }
   };
@@ -44,6 +60,7 @@ function App() {
     setLocating(true);
     navigator.geolocation?.getCurrentPosition(async ({ coords }) => { try { const res = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}`); setNearby(res.ok ? await res.json() : []); } catch { setNearby([]); } finally { setLocating(false); } }, () => setLocating(false));
   };
+  if (new URLSearchParams(window.location.search).has("qr")) return <div className="app"><header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div></header><main className="qr-page">{qrLoading ? <div className="qr-state"><QrCode size={42}/><h1>Đang mở câu chuyện...</h1><p>CityEcho đang tìm nội dung từ mã QR.</p></div> : qrError ? <div className="qr-state error"><X size={42}/><h1>Không thể mở QR Code</h1><p>{qrError}</p><button className="primary" onClick={() => { window.location.href = "/"; }}>Về trang khám phá</button></div> : qrPoi ? <div className="qr-story"><span className="eyebrow"><QrCode size={14}/> CITYECHO · QR STORY</span><img src={qrPoi.image_url} alt={qrPoi.translation.name}/><span className="tag">{qrPoi.category}</span><h1>{qrPoi.translation.name}</h1><p className="qr-description">{qrPoi.translation.description}</p><div className="qr-narration"><Headphones size={22}/><div><b>Thuyết minh tiếng Việt</b><small>Đã mở bằng QR Code · Không cần GPS</small></div><button className="play" onClick={() => playNarration(qrPoi, !playing, "QR")}>{playing ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => playNarration(qrPoi, true, "QR")}>{playing ? "Đang phát câu chuyện..." : "Nghe câu chuyện"}</button><button className="secondary qr-back" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={16}/> Khám phá các địa điểm khác</button></div> : null}</main><footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer></div>;
   return <div className="app">
     <header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div><nav><button className={view === "explore" ? "active" : ""} onClick={() => setView("explore")}><Compass size={16}/> Khám phá</button><button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><ShieldCheck size={16}/> CMS quản trị</button></nav><button className="menu" onClick={() => setMenuOpen(!menuOpen)}><Menu/></button></header>
     {view === "admin" ? <Admin pois={pois} setPois={setPois} onBack={() => setView("explore")} /> : <main>

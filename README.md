@@ -54,4 +54,14 @@ docker compose up --build
 5. Editor có thể gửi POI bản nháp để duyệt; Admin có thể xuất bản, yêu cầu chỉnh sửa hoặc lưu trữ.
 6. Trên trang khám phá, mở một POI và bấm **Nghe câu chuyện**. API sẽ nhận sự kiện `MANUAL/start`; bấm nút tạm dừng/kết thúc sẽ gửi `MANUAL/finish`.
 
+## Mở POI bằng QR
+
+QR Code có thể trỏ tới URL dạng:
+
+```text
+http://localhost:5173/?qr=CITYECHO-BINHTAY
+```
+
+Trang đích sẽ xác thực mã với backend, chỉ hiển thị POI đã xuất bản, không yêu cầu GPS và ghi nhận lượt nghe với nguồn `QR`.
+
 API docs có tại `http://localhost:8000/docs`.

@@ -44,3 +44,10 @@ def test_editor_can_update_poi_translation():
     )
     assert response.status_code == 200
     assert response.json()["translation"]["name"] == "Chùa Bà cập nhật"
+
+
+def test_qr_returns_only_published_poi():
+    response = client.get("/api/v1/qr/CITYECHO-BINHTAY")
+    assert response.status_code == 200
+    assert response.json()["id"] == "cho-lon"
+    assert client.get("/api/v1/qr/UNKNOWN-CODE").status_code == 404
