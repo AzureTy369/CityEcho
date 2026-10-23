@@ -16,3 +16,17 @@ def test_sqlite_store_persists_events_and_audits(tmp_path):
     store.save_audit(audit)
     assert store.load_events() == [event]
     assert store.load_audits()[0]["action"] == "CREATE"
+
+
+def test_sqlite_store_persists_users(tmp_path):
+    store = PersistentStore(f"sqlite:///{tmp_path / 'cityecho.db'}")
+    user = {
+        "id": "u-test",
+        "full_name": "Người kiểm thử",
+        "email": "test@cityecho.vn",
+        "role": "editor",
+        "password_hash": "hashed-password",
+        "is_active": True,
+    }
+    store.save_user(user)
+    assert store.load_users() == [user]

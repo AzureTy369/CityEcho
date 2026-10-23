@@ -31,8 +31,8 @@
 ## Còn cần hoàn thiện trước nghiệm thu
 
 - [x] Lưu POI, narration event và audit log bằng PostgreSQL/SQLAlchemy; bộ nhớ tạm vẫn là fallback cho demo.
-- [ ] Lưu tài khoản CMS bằng PostgreSQL.
-- [ ] Hash mật khẩu lấy từ cấu hình/database thay vì tài khoản demo trong mã nguồn.
+- [x] Lưu tài khoản CMS bằng PostgreSQL.
+- [x] Hash mật khẩu lấy từ cấu hình/database; biến môi trường chỉ seed tài khoản lần đầu.
 - [ ] Upload audio/image multipart và lưu trữ file thật.
 - [ ] Test E2E bằng Playwright cho khám phá, CMS, QR và narration.
 - [ ] Cấu hình HTTPS/LAN để demo GPS trên điện thoại.

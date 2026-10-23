@@ -33,12 +33,22 @@ Tài khoản demo:
 
 ## Lưu dữ liệu
 
-Backend tự dùng bộ nhớ tạm khi không có `DATABASE_URL`, phù hợp chạy nhanh và test. Khi đặt `DATABASE_URL`, backend tự tạo các bảng `pois`, `narration_events` và `audit_logs`, seed POI mẫu nếu database chưa có dữ liệu, rồi đọc dữ liệu lại sau khi restart.
+Backend tự dùng bộ nhớ tạm khi không có `DATABASE_URL`, phù hợp chạy nhanh và test. Khi đặt `DATABASE_URL`, backend tự tạo các bảng `pois`, `narration_events`, `audit_logs` và `users`, seed dữ liệu nếu database chưa có dữ liệu, rồi đọc dữ liệu lại sau khi restart.
 
 Ví dụ PostgreSQL:
 
 ```powershell
 $env:DATABASE_URL="postgresql+psycopg://cityecho:cityecho@localhost:5432/cityecho"
+```
+
+`CITYECHO_JWT_SECRET` nên là chuỗi ngẫu nhiên dài và không commit vào Git. Khi database đã có user, backend ưu tiên user trong bảng `users`; các biến mật khẩu chỉ dùng để seed lần đầu. Nếu không đặt biến môi trường, tài khoản demo mặc định vẫn hoạt động khi chạy local không có database.
+
+Để chạy local với cấu hình đầy đủ:
+
+```powershell
+$env:CITYECHO_JWT_SECRET="thay-bang-secret-ngau-nhien"
+$env:CITYECHO_ADMIN_PASSWORD="mat-khau-admin"
+$env:CITYECHO_EDITOR_PASSWORD="mat-khau-editor"
 ```
 
 ## Docker Compose

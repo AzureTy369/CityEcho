@@ -38,6 +38,17 @@ class AuditRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
 class PersistentStore:
     def __init__(self, url: str | None = None):
         self.url = url or os.getenv("DATABASE_URL", "")
@@ -91,4 +102,35 @@ class PersistentStore:
             return
         with Session(self.engine) as session:
             session.add(AuditRecord(user_email=payload["user"], action=payload["action"], entity_id=payload["entity_id"]))
+            session.commit()
+
+    def load_users(self) -> list[dict[str, Any]]:
+        if not self.engine:
+            return []
+        with Session(self.engine) as session:
+            return [
+                {
+                    "id": record.id,
+                    "full_name": record.full_name,
+                    "email": record.email,
+                    "role": record.role,
+                    "password_hash": record.password_hash,
+                    "is_active": record.is_active,
+                }
+                for record in session.scalars(select(UserRecord).order_by(UserRecord.email)).all()
+            ]
+
+    def save_user(self, payload: dict[str, Any]) -> None:
+        if not self.engine:
+            return
+        with Session(self.engine) as session:
+            record = session.get(UserRecord, payload["id"])
+            if record:
+                record.full_name = payload["full_name"]
+                record.email = payload["email"]
+                record.role = payload["role"]
+                record.password_hash = payload["password_hash"]
+                record.is_active = payload.get("is_active", True)
+            else:
+                session.add(UserRecord(**payload))
             session.commit()

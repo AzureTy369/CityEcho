@@ -13,6 +13,9 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://cityecho:cityecho@db:5432/cityecho
+      CITYECHO_JWT_SECRET: ${CITYECHO_JWT_SECRET:-thay-secret-nay-khi-trien-khai}
+      CITYECHO_ADMIN_PASSWORD: ${CITYECHO_ADMIN_PASSWORD:-admin123}
+      CITYECHO_EDITOR_PASSWORD: ${CITYECHO_EDITOR_PASSWORD:-editor123}
     ports:
       - "8000:8000"
     depends_on:

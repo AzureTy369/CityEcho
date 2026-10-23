@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import uuid4
 
 import jwt
+import os
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -23,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SECRET = "cityecho-demo-secret-change-in-production"
+SECRET = os.getenv("CITYECHO_JWT_SECRET") or "cityecho-local-development-secret"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -184,8 +185,24 @@ POIS: dict[str, Poi] = {
 }
 
 USERS = {
-    "admin@cityecho.vn": (User(id="u-admin", full_name="CityEcho Admin", email="admin@cityecho.vn", role=Role.ADMIN), pwd_context.hash("admin123")),
-    "editor@cityecho.vn": (User(id="u-editor", full_name="Biên tập viên", email="editor@cityecho.vn", role=Role.EDITOR), pwd_context.hash("editor123")),
+    os.getenv("CITYECHO_ADMIN_EMAIL", "admin@cityecho.vn"): (
+        User(
+            id="u-admin",
+            full_name=os.getenv("CITYECHO_ADMIN_NAME", "CityEcho Admin"),
+            email=os.getenv("CITYECHO_ADMIN_EMAIL", "admin@cityecho.vn"),
+            role=Role.ADMIN,
+        ),
+        pwd_context.hash(os.getenv("CITYECHO_ADMIN_PASSWORD", "admin123")),
+    ),
+    os.getenv("CITYECHO_EDITOR_EMAIL", "editor@cityecho.vn"): (
+        User(
+            id="u-editor",
+            full_name=os.getenv("CITYECHO_EDITOR_NAME", "Biên tập viên"),
+            email=os.getenv("CITYECHO_EDITOR_EMAIL", "editor@cityecho.vn"),
+            role=Role.EDITOR,
+        ),
+        pwd_context.hash(os.getenv("CITYECHO_EDITOR_PASSWORD", "editor123")),
+    ),
 }
 EVENTS: list[NarrationEvent] = []
 AUDIT_LOGS: list[dict] = []
@@ -199,6 +216,33 @@ if STORE.enabled:
             STORE.save_poi(seed_poi.model_dump())
     EVENTS = [NarrationEvent.model_validate(item) for item in STORE.load_events()]
     AUDIT_LOGS = STORE.load_audits()
+    stored_users = STORE.load_users()
+    if stored_users:
+        USERS = {
+            item["email"]: (
+                User(
+                    id=item["id"],
+                    full_name=item["full_name"],
+                    email=item["email"],
+                    role=Role(item["role"]),
+                    is_active=item["is_active"],
+                ),
+                item["password_hash"],
+            )
+            for item in stored_users
+        }
+    else:
+        for user, password_hash in USERS.values():
+            STORE.save_user(
+                {
+                    "id": user.id,
+                    "full_name": user.full_name,
+                    "email": user.email,
+                    "role": user.role.value,
+                    "password_hash": password_hash,
+                    "is_active": user.is_active,
+                }
+            )
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
