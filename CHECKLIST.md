@@ -33,10 +33,10 @@
 - [x] Lưu POI, narration event và audit log bằng PostgreSQL/SQLAlchemy; bộ nhớ tạm vẫn là fallback cho demo.
 - [x] Lưu tài khoản CMS bằng PostgreSQL.
 - [x] Hash mật khẩu lấy từ cấu hình/database; biến môi trường chỉ seed tài khoản lần đầu.
-- [ ] Upload audio/image multipart và lưu trữ file thật.
-- [ ] Test E2E bằng Playwright cho khám phá, CMS, QR và narration.
-- [ ] Cấu hình HTTPS/LAN để demo GPS trên điện thoại.
-- [ ] Thêm dữ liệu mẫu đã kiểm chứng tọa độ/hình ảnh.
+- [x] Upload audio/image multipart và lưu trữ file thật.
+- [x] Test E2E bằng Playwright cho khám phá, CMS, QR và narration.
+- [x] Cấu hình HTTPS/LAN để demo GPS trên điện thoại.
+- [x] Thêm dữ liệu mẫu đã kiểm chứng tọa độ/hình ảnh.
 
 ## Thứ tự phát triển tiết kiệm
 
@@ -52,4 +52,5 @@
 $env:PYTHONPATH="backend"
 python -m pytest backend\tests -q
 npm --prefix frontend run build
+npm --prefix frontend run test:e2e
 ```

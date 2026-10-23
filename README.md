@@ -24,7 +24,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Mở `http://localhost:5173`. Nếu backend chưa chạy, frontend tự dùng dữ liệu mẫu để có thể demo giao diện. Khi backend chạy, trang CMS sử dụng JWT và các thao tác trạng thái được lưu vào API.
+Mở `http://localhost:5173`. Vite proxy `/api` và `/media` sang cổng 8000, nên không cần `VITE_API_URL` khi chạy local. Nếu backend chưa chạy, frontend tự dùng 12 POI mẫu quanh SGU để demo giao diện. Khi backend chạy, trang CMS sử dụng JWT, có thể tải ảnh/audio và lưu trạng thái vào API.
 
 Tài khoản demo:
 
@@ -63,6 +63,9 @@ docker compose up --build
 - `GET /api/v1/pois/nearby?lat=...&lng=...`: POI gần vị trí theo Haversine.
 - `GET /api/v1/geofence/evaluate?lat=...&lng=...`: chọn POI nằm trong geofence để kích hoạt narration.
 - `GET /api/v1/qr/{code}`: mở POI từ QR.
+- `GET /api/v1/pois/{id}/narration`: lấy văn bản và audio thuyết minh.
+- `POST /api/v1/admin/pois/{id}/images`: upload ảnh multipart.
+- `POST /api/v1/admin/pois/{id}/audios`: upload audio multipart.
 - `POST /api/v1/narration-events`: ghi nhận lượt nghe.
 - `POST /api/v1/admin/pois/{id}/submit|approve|request-revision|archive`: workflow xuất bản.
 - `PATCH /api/v1/admin/pois/{id}`: cập nhật nội dung POI.
@@ -121,3 +124,41 @@ Trong chi tiết mỗi POI, CityEcho cũng tự tạo QR Code tương ứng. B�
 `localhost` chỉ dùng được trên chính máy đang chạy frontend. Muốn quét bằng điện thoại trong cùng mạng Wi-Fi, chạy Vite với `--host 0.0.0.0`, dùng địa chỉ IP LAN của máy thay cho `localhost`, và cấu hình `VITE_API_URL` trỏ tới backend IP LAN.
 
 API docs có tại `http://localhost:8000/docs`.
+
+## Dữ liệu mẫu quanh SGU
+
+Bản đầu có 12 POI (đúng phạm vi 10–15 điểm trong bản thiết kế), tọa độ ghi kèm địa chỉ để đối chiếu OSM/thực địa:
+
+SGU, Chùa Bà Thiên Hậu, Hội quán Nghĩa An, Chùa Ông Bổn, Nhà thờ Cha Tam, Chợ An Đông, Bệnh viện Chợ Rẫy, Cầu Chữ Y, Chợ Bình Tây, Chùa Phụng Sơn, Bảo tàng Mỹ thuật TP.HCM, Hồ Con Rùa.
+
+Hình minh họa nội bộ nằm tại `frontend/public/images/pois/`. CMS có thể thay bằng ảnh/audio thật qua form upload.
+
+## Upload media
+
+Trong CMS, sau khi tạo hoặc sửa POI, chọn file ảnh (jpg/png/webp, tối đa 5MB) hoặc audio (mp3/wav/ogg, tối đa 20MB). File lưu tại `backend/media/uploads/` và được phục vụ ở `/media/...`.
+
+## Demo GPS trên điện thoại (HTTPS/LAN)
+
+Trình duyệt chỉ cấp GPS ổn định trên HTTPS hoặc localhost.
+
+1. Chạy backend lắng nghe mọi giao diện: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+2. Trong terminal khác:
+
+```powershell
+$env:CITYECHO_HTTPS="1"
+.\scripts\demo-lan.ps1
+```
+
+3. Trên điện thoại cùng Wi-Fi, mở `https://<IPv4-LAN>:5173`, chấp nhận chứng chỉ tự ký, rồi bấm **Bật thuyết minh GPS**.
+
+Vite proxy giúp điện thoại chỉ cần một cổng HTTPS; API và file media đi cùng origin.
+
+## Kiểm thử
+
+```powershell
+$env:PYTHONPATH="backend"
+python -m pytest backend\tests -q
+npm --prefix frontend run build
+npx --prefix frontend playwright install chromium
+npm --prefix frontend run test:e2e
+```

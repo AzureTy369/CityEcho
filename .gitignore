@@ -40,7 +40,12 @@ Thumbs.db
 *.log
 media/*
 !media/.gitkeep
+backend/media/uploads/*
+!backend/media/uploads/.gitkeep
 postgres-data/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 
 # Generated archives and temporary files
 *.zip

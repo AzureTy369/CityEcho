@@ -12,7 +12,7 @@ def test_haversine_same_point():
 def test_public_pois_only():
     response = client.get("/api/v1/pois")
     assert response.status_code == 200
-    assert response.json()["total"] >= 4
+    assert response.json()["total"] >= 12
 
 
 def test_admin_workflow():

@@ -8,21 +8,28 @@ from uuid import uuid4
 
 import jwt
 import os
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
+from app.file_storage import media_root, save_upload
+from app.seed import SEED_POIS
 from app.storage import PersistentStore
 
 app = FastAPI(title="CityEcho API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_origins=["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|(\d{1,3}\.){3}\d{1,3})(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+MEDIA_DIR = media_root()
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 SECRET = os.getenv("CITYECHO_JWT_SECRET") or "cityecho-local-development-secret"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -107,82 +114,7 @@ class User(BaseModel):
     is_active: bool = True
 
 
-def _poi(
-    id: str,
-    category: str,
-    name: str,
-    description: str,
-    narration: str,
-    lat: float,
-    lng: float,
-    priority: int,
-    qr: str,
-    image: str,
-) -> Poi:
-    return Poi(
-        id=id,
-        category=category,
-        latitude=lat,
-        longitude=lng,
-        radius_m=40,
-        priority=priority,
-        status=PoiStatus.PUBLISHED,
-        translation=Translation(name=name, description=description, narration_text=narration),
-        qr_code=qr,
-        image_url=image,
-    )
-
-
-POIS: dict[str, Poi] = {
-    "sgu-main": _poi(
-        "sgu-main",
-        "campus",
-        "Trường Đại học Sài Gòn",
-        "Không gian giáo dục lâu đời giữa lòng Quận 5, gắn với nhiều lớp ký ức đô thị.",
-        "Chào mừng bạn đến với CityEcho. Đây là điểm khởi đầu để khám phá những câu chuyện quanh SGU.",
-        10.7591,
-        106.6823,
-        5,
-        "CITYECHO-SGU",
-        "https://images.unsplash.com/photo-1564981797816-1043664bf78d?auto=format&fit=crop&w=1200&q=80",
-    ),
-    "chua-ba": _poi(
-        "chua-ba",
-        "religious",
-        "Chùa Bà Thiên Hậu",
-        "Ngôi chùa người Hoa nổi tiếng với kiến trúc cổ và các mảng chạm tinh xảo.",
-        "Bạn đang đứng trước Chùa Bà Thiên Hậu, một điểm giao thoa văn hóa đặc sắc của khu Chợ Lớn.",
-        10.7548,
-        106.6639,
-        5,
-        "CITYECHO-THIENHAU",
-        "https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=1200&q=80",
-    ),
-    "cho-lon": _poi(
-        "cho-lon",
-        "market",
-        "Chợ Bình Tây",
-        "Biểu tượng thương mại của Chợ Lớn với tháp đồng hồ và sân trong rộng.",
-        "Chợ Bình Tây được xây dựng đầu thế kỷ 20, là nơi lưu giữ nhịp sống thương hồ của thành phố.",
-        10.7527,
-        106.6504,
-        4,
-        "CITYECHO-BINHTAY",
-        "https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=1200&q=80",
-    ),
-    "ho-con-rua": _poi(
-        "ho-con-rua",
-        "public-space",
-        "Hồ Con Rùa",
-        "Không gian công cộng quen thuộc, nơi các tuyến đường trung tâm gặp nhau.",
-        "Hồ Con Rùa là một lát cắt đời sống đô thị, đặc biệt sôi động vào buổi tối.",
-        10.7827,
-        106.6953,
-        3,
-        "CITYECHO-HOCRUA",
-        "https://images.unsplash.com/photo-1523731407965-2430cd12f5e4?auto=format&fit=crop&w=1200&q=80",
-    ),
-}
+POIS: dict[str, Poi] = {item_id: Poi.model_validate(item) for item_id, item in SEED_POIS.items()}
 
 USERS = {
     os.getenv("CITYECHO_ADMIN_EMAIL", "admin@cityecho.vn"): (
@@ -326,7 +258,7 @@ def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-1
     return sorted(result, key=lambda p: (-p.priority, p.distance_m or 0))
 
 
-@app.get("/api/v1/geofence/evaluate")
+@app.api_route("/api/v1/geofence/evaluate", methods=["GET", "POST"])
 def evaluate_geofence(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
     candidates = [poi for poi in nearby(lat, lng) if (poi.distance_m or 0) <= poi.radius_m]
     return {"candidate": candidates[0] if candidates else None, "candidates": candidates}
@@ -338,6 +270,19 @@ def get_poi(poi_id: str):
     if not poi or poi.status != PoiStatus.PUBLISHED:
         raise HTTPException(status_code=404, detail="Không tìm thấy địa điểm")
     return poi
+
+
+@app.get("/api/v1/pois/{poi_id}/narration")
+def get_narration(poi_id: str, lang: str = "vi"):
+    del lang
+    poi = get_poi(poi_id)
+    return {
+        "poi_id": poi.id,
+        "language_code": poi.translation.language_code,
+        "narration_text": poi.translation.narration_text,
+        "audio_url": poi.audio_url,
+        "audio_duration_seconds": poi.audio_duration_seconds,
+    }
 
 
 @app.get("/api/v1/qr/{code}")
@@ -358,12 +303,6 @@ def create_event(event: NarrationEvent):
     EVENTS.append(event)
     STORE.save_event(event.model_dump())
     return {"accepted": True, "event_id": event.event_id}
-
-
-@app.post("/api/v1/geofence/evaluate")
-def evaluate_geofence(lat: float = Query(...), lng: float = Query(...)):
-    candidates = [p for p in nearby(lat, lng) if p.distance_m is not None and p.distance_m <= p.radius_m]
-    return {"candidate": candidates[0] if candidates else None, "candidates": candidates}
 
 
 @app.get("/api/v1/admin/pois")
@@ -401,6 +340,38 @@ def edit_poi(poi_id: str, payload: PoiUpdate, user: User = Depends(require_roles
     return updated
 
 
+def _persist_poi(poi: Poi, user: User, action: str) -> Poi:
+    POIS[poi.id] = poi
+    STORE.save_poi(poi.model_dump())
+    audit = {"user": user.email, "action": action, "entity_id": poi.id, "at": datetime.now(timezone.utc).isoformat()}
+    AUDIT_LOGS.append(audit)
+    STORE.save_audit(audit)
+    return poi
+
+
+@app.post("/api/v1/admin/pois/{poi_id}/images")
+async def upload_image(poi_id: str, file: UploadFile = File(...), user: User = Depends(require_roles(Role.ADMIN, Role.EDITOR))):
+    poi = POIS.get(poi_id)
+    if not poi:
+        raise HTTPException(status_code=404, detail="Không tìm thấy POI")
+    url, _size = save_upload(file, "images", poi_id, await file.read())
+    return _persist_poi(poi.model_copy(update={"image_url": url}), user, "UPLOAD_IMAGE")
+
+
+@app.post("/api/v1/admin/pois/{poi_id}/audios")
+async def upload_audio(
+    poi_id: str,
+    file: UploadFile = File(...),
+    duration_seconds: int = Query(default=0, ge=0),
+    user: User = Depends(require_roles(Role.ADMIN, Role.EDITOR)),
+):
+    poi = POIS.get(poi_id)
+    if not poi:
+        raise HTTPException(status_code=404, detail="Không tìm thấy POI")
+    url, _size = save_upload(file, "audios", poi_id, await file.read())
+    return _persist_poi(poi.model_copy(update={"audio_url": url, "audio_duration_seconds": duration_seconds}), user, "UPLOAD_AUDIO")
+
+
 def update_status(poi_id: str, new_status: PoiStatus, user: User) -> Poi:
     poi = POIS.get(poi_id)
     if not poi:
@@ -415,6 +386,11 @@ def update_status(poi_id: str, new_status: PoiStatus, user: User) -> Poi:
 
 @app.post("/api/v1/admin/pois/{poi_id}/submit")
 def submit_poi(poi_id: str, user: User = Depends(require_roles(Role.ADMIN, Role.EDITOR))):
+    poi = POIS.get(poi_id)
+    if not poi:
+        raise HTTPException(status_code=404, detail="Không tìm thấy POI")
+    if len(poi.translation.name.strip()) < 2 or len(poi.translation.narration_text.strip()) < 10:
+        raise HTTPException(status_code=422, detail="POI cần tên và nội dung thuyết minh tối thiểu trước khi gửi duyệt")
     return update_status(poi_id, PoiStatus.PENDING, user)
 
 
