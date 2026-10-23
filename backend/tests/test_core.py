@@ -21,3 +21,14 @@ def test_admin_workflow():
     token = login.json()["access_token"]
     response = client.post("/api/v1/admin/pois/sgu-main/submit", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
+
+
+def test_admin_analytics_counts_events():
+    login = client.post("/api/v1/auth/login", data={"username": "admin@cityecho.vn", "password": "admin123"})
+    token = login.json()["access_token"]
+    client.post("/api/v1/narration-events", json={"poi_id": "chua-ba", "source": "QR", "event_type": "start"})
+    client.post("/api/v1/narration-events", json={"poi_id": "chua-ba", "source": "QR", "event_type": "finish", "completed": True, "duration_seconds": 30})
+    response = client.get("/api/v1/admin/analytics/overview", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["total_plays"] >= 1
+    assert response.json()["sources"]["QR"] >= 1

@@ -364,13 +364,21 @@ def archive_poi(poi_id: str, user: User = Depends(require_roles(Role.ADMIN))):
 def analytics(user: User = Depends(require_roles(Role.ADMIN))):
     del user
     completed = [e for e in EVENTS if e.completed]
-    sources = {source: sum(e.source == source for e in completed) for source in ("GPS", "QR", "MANUAL")}
+    started = [e for e in EVENTS if e.event_type == "start"]
+    sources = {source: sum(e.source == source for e in started) for source in ("GPS", "QR", "MANUAL")}
     top = sorted(
-        ((poi.translation.name, sum(e.poi_id == poi.id for e in completed)) for poi in POIS.values()),
-        key=lambda item: item[1],
+        ({"poi_id": poi.id, "name": poi.translation.name, "plays": sum(e.poi_id == poi.id for e in completed)} for poi in POIS.values()),
+        key=lambda item: item["plays"],
         reverse=True,
     )
-    return {"total_plays": len(completed), "completed_plays": len(completed), "total_duration": sum(e.duration_seconds for e in completed), "sources": sources, "top_pois": top[:5]}
+    return {
+        "total_plays": len(started),
+        "completed_plays": len(completed),
+        "completion_rate": round(len(completed) / len(started) * 100, 1) if started else 0,
+        "total_duration": sum(e.duration_seconds for e in completed),
+        "sources": sources,
+        "top_pois": top[:5],
+    }
 
 
 @app.get("/api/v1/admin/audit-logs")
