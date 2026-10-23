@@ -63,6 +63,8 @@ docker compose up --build
 4. Mỗi POI có cooldown 5 phút để không tự phát lặp. Nút nghe thủ công và QR vẫn hoạt động độc lập.
 5. Khi demo trong phòng học hoặc trình duyệt không có GPS thật, bấm **Mô phỏng GPS**. Hệ thống mô phỏng vị trí tại POI SGU, mở POI tương ứng và phát narration nguồn `GPS`.
 
+Trong khi nghe, nút **Tạm dừng** chỉ tạm dừng giọng đọc/audio; nút **Tiếp tục** phát tiếp từ vị trí đang dừng. Chỉ nút **Kết thúc thuyết minh** mới ghi nhận lượt nghe hoàn tất.
+
 ## Mở POI bằng QR
 
 QR Code có thể trỏ tới URL dạng:

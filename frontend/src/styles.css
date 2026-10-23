@@ -7,4 +7,5 @@
 .narration-notice{padding:9px 11px;background:#fff5e5;color:#9a6a2f;border-radius:5px;font-size:11px;line-height:1.5}
 .gps-toggle.enabled{color:#287866;background:#e6f5ef;border-radius:6px;padding:9px 11px}.gps-message{margin:15px 0 0;color:#287866;font-size:11px}
 .demo-gps{color:#c05d39;border:1px dashed #d76b43;border-radius:6px;padding:8px 10px}
+.stop-button{margin-top:8px;justify-content:center;color:#9b5a4d}
 .qr-download{display:flex;align-items:center;gap:12px;margin-top:16px;padding:10px;background:#f7f8f5;border:1px solid #e7e8e1;border-radius:7px}.qr-download img{width:72px;height:72px}.qr-download b,.qr-download small{display:block}.qr-download b{font-size:12px}.qr-download small{font-size:10px;color:#899595;margin:4px 0 7px}.qr-download a{color:#c05d39;font-size:11px;font-weight:700;text-decoration:none}

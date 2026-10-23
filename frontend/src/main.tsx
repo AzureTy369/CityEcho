@@ -26,6 +26,7 @@ function App() {
   const [locating, setLocating] = useState(false);
   const [nearby, setNearby] = useState<Poi[]>([]);
   const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [view, setView] = useState<"explore" | "admin">("explore");
   const [menuOpen, setMenuOpen] = useState(false);
   const [qrPoi, setQrPoi] = useState<Poi | null>(null);
@@ -37,6 +38,7 @@ function App() {
   const [autoMessage, setAutoMessage] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playingRef = useRef(false);
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
   const cooldownRef = useRef(new Map<string, number>());
   useEffect(() => { loadPois().then(setPois); }, []);
   useEffect(() => {
@@ -76,17 +78,28 @@ function App() {
     playingRef.current = nextPlaying;
     if (!nextPlaying) {
       audioRef.current?.pause();
-      window.speechSynthesis.cancel();
+      window.speechSynthesis.pause();
+      setPaused(true);
+      return;
+    }
+    if (paused && speechRef.current) {
+      audioRef.current?.play().catch(() => undefined);
+      window.speechSynthesis.resume();
+      setPaused(false);
+      return;
+    }
+    if (!nextPlaying) {
       recordNarration(poi, source, "finish");
       return;
     }
+    setPaused(false);
     recordNarration(poi, source, "start");
     setNarrationNotice("");
     if (poi.audio_url) {
       const audio = audioRef.current || new Audio();
       audioRef.current = audio;
       audio.src = poi.audio_url;
-      audio.onended = () => { setPlaying(false); recordNarration(poi, source, "finish"); };
+      audio.onended = () => { setPlaying(false); setPaused(false); recordNarration(poi, source, "finish"); };
       try { await audio.play(); } catch { setNarrationNotice("Trình duyệt chặn audio tự động. Hãy bấm nút phát lại."); setPlaying(false); }
       return;
     }
@@ -97,11 +110,25 @@ function App() {
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(poi.translation.narration_text);
+    speechRef.current = utterance;
     utterance.lang = "vi-VN";
     utterance.rate = 0.95;
-    utterance.onend = () => { setPlaying(false); recordNarration(poi, source, "finish"); };
+    utterance.onend = () => { setPlaying(false); setPaused(false); speechRef.current = null; recordNarration(poi, source, "finish"); };
     utterance.onerror = () => { setPlaying(false); setNarrationNotice("Không thể phát thuyết minh trên thiết bị này."); };
     window.speechSynthesis.speak(utterance);
+  };
+  const stopNarration = (poi: Poi, source = "MANUAL") => {
+    audioRef.current?.pause();
+    window.speechSynthesis.cancel();
+    speechRef.current = null;
+    setPlaying(false);
+    setPaused(false);
+    recordNarration(poi, source, "finish");
+  };
+  const toggleNarration = (poi: Poi, source = "MANUAL") => {
+    if (playing && !paused) return playNarration(poi, false, source);
+    if (paused) return playNarration(poi, true, source);
+    return playNarration(poi, true, source);
   };
   useEffect(() => {
     playingRef.current = playing;
@@ -159,14 +186,14 @@ function App() {
       setLocating(false);
     }
   };
-  if (new URLSearchParams(window.location.search).has("qr")) return <div className="app"><header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div></header><main className="qr-page">{qrLoading ? <div className="qr-state"><QrCode size={42}/><h1>Đang mở câu chuyện...</h1><p>CityEcho đang tìm nội dung từ mã QR.</p></div> : qrError ? <div className="qr-state error"><X size={42}/><h1>Không thể mở QR Code</h1><p>{qrError}</p><button className="primary" onClick={() => { window.location.href = "/"; }}>Về trang khám phá</button></div> : qrPoi ? <div className="qr-story"><span className="eyebrow"><QrCode size={14}/> CITYECHO · QR STORY</span><img src={qrPoi.image_url} alt={qrPoi.translation.name}/><span className="tag">{qrPoi.category}</span><h1>{qrPoi.translation.name}</h1><p className="qr-description">{qrPoi.translation.description}</p><div className="qr-narration"><Headphones size={22}/><div><b>Thuyết minh tiếng Việt</b><small>Đã mở bằng QR Code · Không cần GPS</small></div><button className="play" onClick={() => playNarration(qrPoi, !playing, "QR")}>{playing ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => playNarration(qrPoi, true, "QR")}>{playing ? "Đang phát câu chuyện..." : "Nghe câu chuyện"}</button>{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<button className="secondary qr-back" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={16}/> Khám phá các địa điểm khác</button></div> : null}</main><footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer></div>;
+  if (new URLSearchParams(window.location.search).has("qr")) return <div className="app"><header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div></header><main className="qr-page">{qrLoading ? <div className="qr-state"><QrCode size={42}/><h1>Đang mở câu chuyện...</h1><p>CityEcho đang tìm nội dung từ mã QR.</p></div> : qrError ? <div className="qr-state error"><X size={42}/><h1>Không thể mở QR Code</h1><p>{qrError}</p><button className="primary" onClick={() => { window.location.href = "/"; }}>Về trang khám phá</button></div> : qrPoi ? <div className="qr-story"><span className="eyebrow"><QrCode size={14}/> CITYECHO · QR STORY</span><img src={qrPoi.image_url} alt={qrPoi.translation.name}/><span className="tag">{qrPoi.category}</span><h1>{qrPoi.translation.name}</h1><p className="qr-description">{qrPoi.translation.description}</p><div className="qr-narration"><Headphones size={22}/><div><b>Thuyết minh tiếng Việt</b><small>Đã mở bằng QR Code · Không cần GPS</small></div><button className="play" onClick={() => toggleNarration(qrPoi, "QR")}>{playing && !paused ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => toggleNarration(qrPoi, "QR")}>{playing && !paused ? "Tạm dừng" : paused ? "Tiếp tục" : "Nghe câu chuyện"}</button>{playing && <button className="secondary full stop-button" onClick={() => stopNarration(qrPoi, "QR")}>Kết thúc thuyết minh</button>}{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<button className="secondary qr-back" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={16}/> Khám phá các địa điểm khác</button></div> : null}</main><footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer></div>;
   return <div className="app">
     <header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div><nav><button className={view === "explore" ? "active" : ""} onClick={() => setView("explore")}><Compass size={16}/> Khám phá</button><button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><ShieldCheck size={16}/> CMS quản trị</button></nav><button className="menu" onClick={() => setMenuOpen(!menuOpen)}><Menu/></button></header>
     {view === "admin" ? <Admin pois={pois} setPois={setPois} onBack={() => setView("explore")} /> : <main>
       <section className="hero"><div><p className="eyebrow"><Sparkles size={14}/> CITYECHO · SGU COLLECTION</p><h1>Đi chậm lại.<br/><em>Nghe thành phố kể.</em></h1><p className="hero-copy">Khám phá những câu chuyện văn hóa, lịch sử quanh Sài Gòn qua bản đồ tương tác và thuyết minh thông minh.</p><div className="hero-actions"><button className="primary" onClick={locate}><LocateFixed size={17}/> {locating ? "Đang tìm vị trí..." : "Tìm địa điểm quanh tôi"}</button><button className={`secondary gps-toggle ${autoNarration ? "enabled" : ""}`} onClick={() => setAutoNarration((value) => !value)}><Headphones size={16}/> {autoNarration ? "Tắt thuyết minh GPS" : "Bật thuyết minh GPS"}</button><button className="secondary demo-gps" onClick={() => simulateGps()}><MapPin size={16}/> Mô phỏng GPS</button><button className="secondary" onClick={() => document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" })}>Xem tất cả POI <ArrowLeft size={16} className="rotate"/></button></div>{autoMessage && <p className="gps-message">{autoMessage}</p>}</div><div className="hero-art"><div className="sun"/><div className="hero-card"><MapPin size={18}/><span>10.7591° N<br/><b>106.6823° E</b></span></div><div className="hero-label">SÀI GÒN<br/><strong>DI SẢN SỐ</strong></div></div></section>
       {nearby.length > 0 && <section className="nearby"><b><LocateFixed size={16}/> {nearby.length} địa điểm gần bạn</b><span>Đã sắp xếp theo ưu tiên và khoảng cách</span><button onClick={() => setNearby([])}><X size={16}/></button></section>}
       <section className="explore" id="poi-list"><div className="section-head"><div><p className="eyebrow">BẢN ĐỒ CÂU CHUYỆN</p><h2>Chọn một điểm để bắt đầu</h2></div><div className="filters"><div className="search"><Search size={17}/><input placeholder="Tìm kiếm địa điểm..." value={query} onChange={(e) => setQuery(e.target.value)}/></div><select value={category} onChange={(e) => setCategory(e.target.value)}>{categories.map((c) => <option key={c} value={c}>{c === "all" ? "Tất cả danh mục" : c}</option>)}</select></div></div><div className="content-grid"><div className="map-panel"><div className="map-grid"/>{visible.map((poi, index) => <button key={poi.id} className={`map-pin pin-${index + 1} ${selected?.id === poi.id ? "chosen" : ""}`} onClick={() => setSelected(poi)}><MapPin size={21}/><span>{index + 1}</span></button>)}<div className="map-controls"><button onClick={locate}><LocateFixed size={17}/></button><button onClick={() => setSelected(null)}>＋</button></div><div className="map-legend"><span className="legend-dot"/><span>Điểm đã xuất bản</span></div></div><div className="poi-list">{visible.map((poi) => <article className={`poi-card ${selected?.id === poi.id ? "selected" : ""}`} key={poi.id} onClick={() => setSelected(poi)}><img src={poi.image_url} alt=""/><div className="poi-body"><div className="poi-top"><span className="tag">{poi.category}</span><span className="poi-number">0{visible.indexOf(poi) + 1}</span></div><h3>{poi.translation.name}</h3><p>{poi.translation.description}</p><div className="poi-meta"><span><Headphones size={14}/> Thuyết minh</span><span><QrCode size={14}/> QR</span></div></div></article>)}</div></div></section>
-      {selected && <aside className="detail-drawer"><button className="close" onClick={() => setSelected(null)}><X/></button><img src={selected.image_url} alt=""/><div className="drawer-content"><span className="tag">{selected.category}</span><h2>{selected.translation.name}</h2><p>{selected.translation.description}</p><div className="audio-box"><div className="audio-icon"><Headphones/></div><div><b>Thuyết minh tiếng Việt</b><small>{selected.audio_url ? "Audio file · 01:12" : "Đọc tự động bằng trình duyệt"}</small></div><button className="play" onClick={() => playNarration(selected, !playing)}>{playing ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => playNarration(selected, true)}>{playing ? "Đang phát thuyết minh..." : "Nghe câu chuyện"}</button>{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<div className="coordinates"><MapPin size={16}/> {selected.latitude.toFixed(4)}° N · {selected.longitude.toFixed(4)}° E <span>QR: {selected.qr_code}</span></div>{qrImage && <div className="qr-download"><img src={qrImage} alt={`QR Code ${selected.translation.name}`}/><div><b>QR Code thuyết minh</b><small>Quét để mở không cần GPS</small><a href={qrImage} download={`cityecho-${selected.id}-qr.png`}>Tải QR để in</a></div></div>}</div></aside>}
+      {selected && <aside className="detail-drawer"><button className="close" onClick={() => setSelected(null)}><X/></button><img src={selected.image_url} alt=""/><div className="drawer-content"><span className="tag">{selected.category}</span><h2>{selected.translation.name}</h2><p>{selected.translation.description}</p><div className="audio-box"><div className="audio-icon"><Headphones/></div><div><b>Thuyết minh tiếng Việt</b><small>{selected.audio_url ? "Audio file · 01:12" : "Đọc tự động bằng trình duyệt"}</small></div><button className="play" onClick={() => toggleNarration(selected)}>{playing && !paused ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => toggleNarration(selected)}>{playing && !paused ? "Tạm dừng" : paused ? "Tiếp tục" : "Nghe câu chuyện"}</button>{playing && <button className="secondary full stop-button" onClick={() => stopNarration(selected)}>Kết thúc thuyết minh</button>}{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<div className="coordinates"><MapPin size={16}/> {selected.latitude.toFixed(4)}° N · {selected.longitude.toFixed(4)}° E <span>QR: {selected.qr_code}</span></div>{qrImage && <div className="qr-download"><img src={qrImage} alt={`QR Code ${selected.translation.name}`}/><div><b>QR Code thuyết minh</b><small>Quét để mở không cần GPS</small><a href={qrImage} download={`cityecho-${selected.id}-qr.png`}>Tải QR để in</a></div></div>}</div></aside>}
     </main>}
     {menuOpen && <div className="mobile-menu"><button onClick={() => { setView("explore"); setMenuOpen(false); }}>Khám phá</button><button onClick={() => { setView("admin"); setMenuOpen(false); }}>CMS quản trị</button></div>}
     <footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer>
