@@ -61,6 +61,7 @@ docker compose up --build
 2. Bấm **Bật thuyết minh GPS** và cho phép quyền vị trí.
 3. Khi vị trí nằm trong bán kính geofence của POI, CityEcho chọn POI ưu tiên cao nhất và phát narration với nguồn `GPS`.
 4. Mỗi POI có cooldown 5 phút để không tự phát lặp. Nút nghe thủ công và QR vẫn hoạt động độc lập.
+5. Khi demo trong phòng học hoặc trình duyệt không có GPS thật, bấm **Mô phỏng GPS**. Hệ thống mô phỏng vị trí tại POI SGU, mở POI tương ứng và phát narration nguồn `GPS`.
 
 ## Mở POI bằng QR
 
