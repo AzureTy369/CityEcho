@@ -2,6 +2,8 @@
 
 CityEcho là website khám phá văn hóa quanh SGU với bản đồ POI, nội dung thuyết minh, QR, geofence và CMS.
 
+Checklist nghiệm thu và thứ tự phát triển nằm tại [CHECKLIST.md](./CHECKLIST.md). Lệnh kiểm tra nhanh nằm tại [scripts/verify.ps1](./scripts/verify.ps1).
+
 ## Chạy nhanh
 
 ### Frontend
