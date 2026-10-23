@@ -64,4 +64,25 @@ http://localhost:5173/?qr=CITYECHO-BINHTAY
 
 Trang đích sẽ xác thực mã với backend, chỉ hiển thị POI đã xuất bản, không yêu cầu GPS và ghi nhận lượt nghe với nguồn `QR`.
 
+## Kiểm thử thuyết minh và QR
+
+1. Chạy backend ở cổng `8000` và frontend ở cổng `5173`.
+2. Trên trang khám phá, bấm một POI rồi bấm **Nghe câu chuyện**. Bản demo sẽ đọc `narration_text` bằng giọng đọc tiếng Việt của Chrome/Edge; nếu POI có `audio_url`, hệ thống sẽ phát file audio đó.
+3. Kiểm thử QR ngay trên máy tính bằng cách mở:
+
+   ```text
+   http://localhost:5173/?qr=CITYECHO-BINHTAY
+   ```
+
+4. Trang QR hiện **Chợ Bình Tây**. Bấm **Nghe câu chuyện** để nghe và ghi nhận nguồn `QR`.
+5. Kiểm thử mã sai bằng:
+
+   ```text
+   http://localhost:5173/?qr=QR-SAI
+   ```
+
+   Kết quả mong đợi là trang báo QR không hợp lệ.
+
+`localhost` chỉ dùng được trên chính máy đang chạy frontend. Muốn quét bằng điện thoại trong cùng mạng Wi-Fi, chạy Vite với `--host 0.0.0.0`, dùng địa chỉ IP LAN của máy thay cho `localhost`, và cấu hình `VITE_API_URL` trỏ tới backend IP LAN.
+
 API docs có tại `http://localhost:8000/docs`.
