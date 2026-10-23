@@ -9,6 +9,8 @@ from fastapi import HTTPException, UploadFile
 
 IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "image/svg+xml": ".svg"}
 AUDIO_TYPES = {"audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/ogg": ".ogg", "audio/webm": ".webm", "audio/mp4": ".m4a", "audio/aac": ".aac"}
+ALLOWED_KINDS = {"images", "audios"}
+SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
@@ -27,6 +29,10 @@ def _safe_stem(name: str) -> str:
 
 
 def save_upload(file: UploadFile, kind: str, poi_id: str, payload: bytes) -> tuple[str, int]:
+    if kind not in ALLOWED_KINDS:
+        raise HTTPException(status_code=422, detail="Loại media không được hỗ trợ")
+    if not SAFE_ID.fullmatch(poi_id):
+        raise HTTPException(status_code=422, detail="Mã POI không hợp lệ")
     types = IMAGE_TYPES if kind == "images" else AUDIO_TYPES
     limit = MAX_IMAGE_BYTES if kind == "images" else MAX_AUDIO_BYTES
     content_type = (file.content_type or "").split(";")[0].strip().lower()
