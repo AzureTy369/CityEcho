@@ -64,6 +64,8 @@ http://localhost:5173/?qr=CITYECHO-BINHTAY
 
 Trang đích sẽ xác thực mã với backend, chỉ hiển thị POI đã xuất bản, không yêu cầu GPS và ghi nhận lượt nghe với nguồn `QR`.
 
+Trong chi tiết mỗi POI, CityEcho cũng tự tạo QR Code tương ứng. Bấm **Tải QR để in** để lưu ảnh PNG dùng cho poster hoặc bảng giới thiệu tại địa điểm.
+
 ## Kiểm thử thuyết minh và QR
 
 1. Chạy backend ở cổng `8000` và frontend ở cổng `5173`.
