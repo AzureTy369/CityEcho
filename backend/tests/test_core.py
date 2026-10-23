@@ -32,3 +32,15 @@ def test_admin_analytics_counts_events():
     assert response.status_code == 200
     assert response.json()["total_plays"] >= 1
     assert response.json()["sources"]["QR"] >= 1
+
+
+def test_editor_can_update_poi_translation():
+    login = client.post("/api/v1/auth/login", data={"username": "editor@cityecho.vn", "password": "editor123"})
+    token = login.json()["access_token"]
+    response = client.patch(
+        "/api/v1/admin/pois/chua-ba",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"translation": {"language_code": "vi", "name": "Chùa Bà cập nhật", "description": "Mô tả mới", "narration_text": "Nội dung mới"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["translation"]["name"] == "Chùa Bà cập nhật"

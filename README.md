@@ -50,7 +50,8 @@ docker compose up --build
 1. Chọn **CMS quản trị** trên thanh điều hướng.
 2. Đăng nhập bằng tài khoản Admin hoặc Editor.
 3. Bấm **Tạo POI mới**, nhập tên, mô tả, nội dung thuyết minh, tọa độ, bán kính geofence và độ ưu tiên để lưu bản nháp.
-4. Editor có thể gửi POI bản nháp để duyệt; Admin có thể xuất bản, yêu cầu chỉnh sửa hoặc lưu trữ.
-5. Trên trang khám phá, mở một POI và bấm **Nghe câu chuyện**. API sẽ nhận sự kiện `MANUAL/start`; bấm nút tạm dừng/kết thúc sẽ gửi `MANUAL/finish`.
+4. Chọn **Chỉnh sửa** ở bảng POI để cập nhật nội dung, tọa độ, geofence hoặc độ ưu tiên.
+5. Editor có thể gửi POI bản nháp để duyệt; Admin có thể xuất bản, yêu cầu chỉnh sửa hoặc lưu trữ.
+6. Trên trang khám phá, mở một POI và bấm **Nghe câu chuyện**. API sẽ nhận sự kiện `MANUAL/start`; bấm nút tạm dừng/kết thúc sẽ gửi `MANUAL/finish`.
 
 API docs có tại `http://localhost:8000/docs`.

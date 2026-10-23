@@ -325,6 +325,8 @@ def edit_poi(poi_id: str, payload: PoiUpdate, user: User = Depends(require_roles
     if not poi:
         raise HTTPException(status_code=404, detail="Không tìm thấy POI")
     updates = payload.model_dump(exclude_unset=True)
+    if "translation" in updates and updates["translation"] is not None:
+        updates["translation"] = Translation.model_validate(updates["translation"])
     updated = poi.model_copy(update=updates)
     POIS[poi_id] = updated
     AUDIT_LOGS.append({"user": user.email, "action": "UPDATE", "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()})
