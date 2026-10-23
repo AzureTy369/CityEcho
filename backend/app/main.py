@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
+from app.storage import PersistentStore
 
 app = FastAPI(title="CityEcho API", version="1.0.0")
 app.add_middleware(
@@ -188,6 +189,16 @@ USERS = {
 }
 EVENTS: list[NarrationEvent] = []
 AUDIT_LOGS: list[dict] = []
+STORE = PersistentStore()
+if STORE.enabled:
+    stored_pois = STORE.load_pois()
+    if stored_pois:
+        POIS = {item["id"]: Poi.model_validate(item) for item in stored_pois}
+    else:
+        for seed_poi in POIS.values():
+            STORE.save_poi(seed_poi.model_dump())
+    EVENTS = [NarrationEvent.model_validate(item) for item in STORE.load_events()]
+    AUDIT_LOGS = STORE.load_audits()
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -301,6 +312,7 @@ def create_event(event: NarrationEvent):
     if event.source not in {"GPS", "QR", "MANUAL"} or event.event_type not in {"start", "finish"}:
         raise HTTPException(status_code=422, detail="source/event_type không hợp lệ")
     EVENTS.append(event)
+    STORE.save_event(event.model_dump())
     return {"accepted": True, "event_id": event.event_id}
 
 
@@ -321,7 +333,10 @@ def create_poi(payload: PoiInput, user: User = Depends(require_roles(Role.ADMIN,
     poi_id = str(uuid4())
     poi = Poi(id=poi_id, **payload.model_dump(), status=PoiStatus.DRAFT, qr_code=f"CITYECHO-{poi_id[:8].upper()}")
     POIS[poi_id] = poi
-    AUDIT_LOGS.append({"user": user.email, "action": "CREATE", "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()})
+    STORE.save_poi(poi.model_dump())
+    audit = {"user": user.email, "action": "CREATE", "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()}
+    AUDIT_LOGS.append(audit)
+    STORE.save_audit(audit)
     return poi
 
 
@@ -335,7 +350,10 @@ def edit_poi(poi_id: str, payload: PoiUpdate, user: User = Depends(require_roles
         updates["translation"] = Translation.model_validate(updates["translation"])
     updated = poi.model_copy(update=updates)
     POIS[poi_id] = updated
-    AUDIT_LOGS.append({"user": user.email, "action": "UPDATE", "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()})
+    STORE.save_poi(updated.model_dump())
+    audit = {"user": user.email, "action": "UPDATE", "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()}
+    AUDIT_LOGS.append(audit)
+    STORE.save_audit(audit)
     return updated
 
 
@@ -344,7 +362,10 @@ def update_status(poi_id: str, new_status: PoiStatus, user: User) -> Poi:
     if not poi:
         raise HTTPException(status_code=404, detail="Không tìm thấy POI")
     POIS[poi_id] = poi.model_copy(update={"status": new_status})
-    AUDIT_LOGS.append({"user": user.email, "action": new_status.value, "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()})
+    STORE.save_poi(POIS[poi_id].model_dump())
+    audit = {"user": user.email, "action": new_status.value, "entity_id": poi_id, "at": datetime.now(timezone.utc).isoformat()}
+    AUDIT_LOGS.append(audit)
+    STORE.save_audit(audit)
     return POIS[poi_id]
 
 
