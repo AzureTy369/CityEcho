@@ -5,7 +5,7 @@
 - [x] Frontend React/TypeScript chạy được.
 - [x] Backend FastAPI chạy được.
 - [x] Danh sách POI công khai.
-- [x] Tìm kiếm và lọc POI.
+- [x] Tìm kiếm và lọc POI.https://antigravity.google/g1-upgrade?utm_campaign=ARGON_LIMIT_REACHED
 - [x] Bản đồ minh họa và marker POI.
 - [x] Trang chi tiết POI.
 - [x] Thuyết minh bằng SpeechSynthesis tiếng Việt.

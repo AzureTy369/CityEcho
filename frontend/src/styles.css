@@ -9,3 +9,35 @@
 .demo-gps{color:#c05d39;border:1px dashed #d76b43;border-radius:6px;padding:8px 10px}
 .stop-button{margin-top:8px;justify-content:center;color:#9b5a4d}
 .qr-download{display:flex;align-items:center;gap:12px;margin-top:16px;padding:10px;background:#f7f8f5;border:1px solid #e7e8e1;border-radius:7px}.qr-download img{width:72px;height:72px}.qr-download b,.qr-download small{display:block}.qr-download b{font-size:12px}.qr-download small{font-size:10px;color:#899595;margin:4px 0 7px}.qr-download a{color:#c05d39;font-size:11px;font-weight:700;text-decoration:none}
+
+/* MapLibre GL Custom Integration */
+.maplibre-container-wrapper{position:relative;width:100%;height:100%;min-height:510px;border-radius:10px;overflow:hidden;box-shadow:0 4px 18px rgba(16,42,69,.08);background:#e4ece8}
+.maplibre-container{width:100%;height:100%;min-height:510px}
+.maplibre-toolbar{position:absolute;top:12px;left:12px;display:flex;flex-direction:column;gap:8px;z-index:10}
+.map-tool-btn{width:34px;height:34px;border-radius:7px;background:#fff;color:#102a43;display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,0,0,.12);border:1px solid #e2ddd5;transition:all .15s ease;font-weight:700;cursor:pointer}
+.map-tool-btn:hover{background:#f4ece4;color:#d76b43;transform:translateY(-1px)}
+.maplibre-marker{background:transparent;border:none;padding:0;cursor:pointer}
+.marker-pin{width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#d76b43;color:#fff;display:grid;place-items:center;box-shadow:0 4px 12px rgba(215,107,67,.45);transition:all .2s cubic-bezier(.34,1.56,.64,1);border:2px solid #fff}
+.marker-pin span{transform:rotate(45deg);font-size:12px;font-weight:700;font-family:"DM Mono",monospace}
+.marker-pin.chosen,.maplibre-marker.is-selected .marker-pin{background:#102a43;box-shadow:0 6px 16px rgba(16,42,69,.55);transform:rotate(-45deg) scale(1.22);border-color:#ffd166}
+.user-location-pulse{position:relative;width:22px;height:22px}
+.pulse-dot{width:14px;height:14px;background:#0284c7;border:2.5px solid #fff;border-radius:50%;position:absolute;top:4px;left:4px;box-shadow:0 0 8px rgba(2,132,199,.6);z-index:2}
+.pulse-ring{width:28px;height:28px;border-radius:50%;background:rgba(2,132,199,.35);position:absolute;top:-3px;left:-3px;animation:pulse-ring-anim 1.8s infinite ease-out;z-index:1}
+@keyframes pulse-ring-anim{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.6);opacity:0}}
+.map-popup-card{padding:4px 2px;font-family:"DM Sans",sans-serif;color:#102a43}
+.map-popup-card strong{display:block;font-size:13px;margin:3px 0;font-family:Fraunces,serif}
+.map-popup-card small{display:block;font-size:10px;color:#6d7d7d}
+.map-popup-card .popup-tag{display:inline-block;padding:2px 6px;background:#fff0e9;color:#d76b43;border-radius:3px;font:9px "DM Mono",monospace;text-transform:uppercase}
+.maplibre-toggle-view{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#557071;background:#fff;border:1px solid #dedbd3;padding:5px 9px;border-radius:5px;cursor:pointer}
+.maplibre-toggle-view.active{background:#e8f1ee;color:#102a43;font-weight:700;border-color:#b4cec5}
+
+/* Fixed Toast & Admin UX Enhancements */
+.fixed-toast{position:fixed;top:90px;right:25px;z-index:999;box-shadow:0 10px 30px rgba(0,0,0,.15);display:flex;align-items:center;padding:12px 18px;border-radius:8px;font-size:13px;font-weight:500;max-width:450px;animation:slideInRight .25s ease-out}
+.error-toast{background:#fde8e4;color:#c0392b;border:1px solid #f5b7b1}
+.success-toast{background:#e8f8f5;color:#1e8449;border:1px solid #a3e4d7}
+@keyframes slideInRight{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+.btn-approve{color:#1e8449!important;background:#e8f8f5!important;font-weight:700}
+.btn-archive{color:#884ea0!important;background:#f4ecf7!important}
+.btn-revision{color:#d35400!important;background:#fef5e7!important}
+.poi-distance-badge{color:#1e8449!important;background:#e8f8f5!important;padding:2px 7px!important;border-radius:4px!important;font-weight:600!important;display:inline-flex!important;align-items:center!important;gap:3px!important}
+

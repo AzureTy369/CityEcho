@@ -247,20 +247,28 @@ def list_pois(
 
 
 @app.get("/api/v1/pois/nearby")
-def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
+def nearby(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    max_distance_m: float = Query(50000, ge=0),
+):
     result = []
     for poi in POIS.values():
         if poi.status != PoiStatus.PUBLISHED:
             continue
-        item = poi.model_copy(update={"distance_m": round(distance_m(lat, lng, poi.latitude, poi.longitude), 1)})
-        if item.distance_m <= 5000:
-            result.append(item)
-    return sorted(result, key=lambda p: (-p.priority, p.distance_m or 0))
+        dist = round(distance_m(lat, lng, poi.latitude, poi.longitude), 1)
+        if dist <= max_distance_m:
+            result.append(poi.model_copy(update={"distance_m": dist}))
+    return sorted(result, key=lambda p: (p.distance_m or 0, -p.priority))
 
 
 @app.api_route("/api/v1/geofence/evaluate", methods=["GET", "POST"])
 def evaluate_geofence(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
-    candidates = [poi for poi in nearby(lat, lng) if (poi.distance_m or 0) <= poi.radius_m]
+    candidates = [
+        poi for poi in nearby(lat, lng, max_distance_m=1000)
+        if (poi.distance_m or 0) <= poi.radius_m
+    ]
+    candidates.sort(key=lambda p: (-p.priority, p.distance_m or 0))
     return {"candidate": candidates[0] if candidates else None, "candidates": candidates}
 
 
