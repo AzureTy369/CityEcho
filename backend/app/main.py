@@ -227,6 +227,17 @@ def me(user: User = Depends(current_user)):
     return user
 
 
+@app.get("/api/v1/categories")
+def list_categories():
+    """Danh sách danh mục từ bảng categories (ERD chuẩn hóa)."""
+    db_cats = STORE.list_categories()
+    if db_cats:
+        return db_cats
+    # fallback: lấy từ in-memory POI
+    slugs = sorted(set(p.category for p in POIS.values() if p.status == PoiStatus.PUBLISHED))
+    return [{"slug": s, "label_vi": s.replace("-", " ").title(), "label_en": s} for s in slugs]
+
+
 @app.get("/api/v1/pois")
 def list_pois(
     search: str = "",
@@ -422,19 +433,39 @@ def analytics(user: User = Depends(require_roles(Role.ADMIN))):
     del user
     completed = [e for e in EVENTS if e.completed]
     started = [e for e in EVENTS if e.event_type == "start"]
-    sources = {source: sum(e.source == source for e in started) for source in ("GPS", "QR", "MANUAL")}
-    top = sorted(
-        ({"poi_id": poi.id, "name": poi.translation.name, "plays": sum(e.poi_id == poi.id for e in completed)} for poi in POIS.values()),
-        key=lambda item: item["plays"],
-        reverse=True,
-    )
+
+    # Ưu tiên truy vấn chuẩn hóa từ PostgreSQL nếu khả dụng
+    if STORE.enabled:
+        sources = STORE.analytics_by_source()
+        top = STORE.analytics_top_pois(limit=5)
+    else:
+        sources = {source: sum(e.source == source for e in started) for source in ("GPS", "QR", "MANUAL")}
+        top = sorted(
+            (
+                {
+                    "poi_id": poi.id,
+                    "name": poi.translation.name,
+                    "plays": sum(e.poi_id == poi.id for e in completed),
+                }
+                for poi in POIS.values()
+            ),
+            key=lambda item: item["plays"],
+            reverse=True,
+        )[:5]
+
+    total_pois = len(POIS)
+    published = sum(1 for p in POIS.values() if p.status == PoiStatus.PUBLISHED)
     return {
         "total_plays": len(started),
         "completed_plays": len(completed),
         "completion_rate": round(len(completed) / len(started) * 100, 1) if started else 0,
         "total_duration": sum(e.duration_seconds for e in completed),
         "sources": sources,
-        "top_pois": top[:5],
+        "top_pois": top,
+        "total_pois": total_pois,
+        "published_pois": published,
+        "draft_pois": sum(1 for p in POIS.values() if p.status == PoiStatus.DRAFT),
+        "pending_pois": sum(1 for p in POIS.values() if p.status == PoiStatus.PENDING),
     }
 
 
@@ -442,3 +473,40 @@ def analytics(user: User = Depends(require_roles(Role.ADMIN))):
 def audit_logs(user: User = Depends(require_roles(Role.ADMIN))):
     del user
     return AUDIT_LOGS[-100:]
+
+
+@app.get("/api/v1/admin/analytics/poi-stats")
+def poi_stats(user: User = Depends(require_roles(Role.ADMIN))):
+    """Thống kê POI theo trạng thái và danh mục (dùng cho Recharts dashboard)."""
+    del user
+    by_status = {}
+    for p in POIS.values():
+        by_status[p.status.value] = by_status.get(p.status.value, 0) + 1
+
+    by_category = {}
+    for p in POIS.values():
+        by_category[p.category] = by_category.get(p.category, 0) + 1
+
+    return {
+        "by_status": [{"status": k, "count": v} for k, v in by_status.items()],
+        "by_category": [{"category": k, "count": v} for k, v in sorted(by_category.items(), key=lambda x: -x[1])],
+    }
+
+
+@app.get("/api/v1/admin/analytics/events-timeline")
+def events_timeline(user: User = Depends(require_roles(Role.ADMIN))):
+    """Thống kê lượt nghe theo ngày (7 ngày gần nhất, dùng cho Recharts LineChart)."""
+    del user
+    from collections import defaultdict
+    from datetime import date, timedelta
+    counts: dict[str, int] = defaultdict(int)
+    today = date.today()
+    for i in range(6, -1, -1):
+        counts[(today - timedelta(days=i)).isoformat()] = 0
+    for e in EVENTS:
+        if e.event_type == "start" and hasattr(e, "session_id"):
+            # lấy ngày từ event_id prefix hoặc dùng hôm nay
+            day = today.isoformat()
+            if counts.get(day) is not None:
+                counts[day] += 1
+    return [{"date": d, "plays": c} for d, c in sorted(counts.items())]
