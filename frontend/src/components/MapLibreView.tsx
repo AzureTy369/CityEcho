@@ -14,28 +14,25 @@ interface MapLibreViewProps {
 
 // OpenStreetMap & CARTO tile styles (no API key required)
 const MAP_STYLES = {
-  voyager: {
-    label: "CARTO Voyager",
+  satellite: {
+    label: "Ảnh vệ tinh (ESRI)",
     style: {
       version: 8 as const,
       sources: {
-        "carto-voyager": {
+        "esri-satellite": {
           type: "raster" as const,
           tiles: [
-            "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-            "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-            "https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
           ],
           tileSize: 256,
-          attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          attribution: '&copy; <a href="https://www.esri.com/">Esri</a> &copy; USGS',
         },
       },
       layers: [
         {
-          id: "carto-voyager-layer",
+          id: "esri-satellite-layer",
           type: "raster" as const,
-          source: "carto-voyager",
+          source: "esri-satellite",
           minzoom: 0,
           maxzoom: 19,
         },
@@ -80,7 +77,7 @@ export const MapLibreView: React.FC<MapLibreViewProps> = ({
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
-  const [styleMode, setStyleMode] = useState<"voyager" | "osm">("voyager");
+  const [styleMode, setStyleMode] = useState<"osm" | "satellite">("osm");
   const [mapLoaded, setMapLoaded] = useState(false);
 
   // Initialize MapLibre
@@ -291,8 +288,8 @@ export const MapLibreView: React.FC<MapLibreViewProps> = ({
         <button
           type="button"
           className="map-tool-btn"
-          title={`Đổi lớp bản đồ: ${styleMode === "voyager" ? "OpenStreetMap" : "CARTO Voyager"}`}
-          onClick={() => setStyleMode((m) => (m === "voyager" ? "osm" : "voyager"))}
+          title={`Đổi lớp bản đồ: ${styleMode === "osm" ? "Ảnh vệ tinh (ESRI)" : "Bản đồ đường phố (OSM)"}`}
+          onClick={() => setStyleMode((m) => (m === "osm" ? "satellite" : "osm"))}
         >
           <Layers size={16} />
         </button>
