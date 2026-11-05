@@ -103,39 +103,52 @@ export default function AnalyticsDashboard({ token, onError }: Props) {
     if (!token) return;
     let mounted = true;
     const loadAnalytics = async () => {
-      try {
-        const [overviewResponse, poiStatsResponse, timelineResponse] = await Promise.all([
+      const errors: string[] = [];
+      const responses = await Promise.allSettled([
           fetch(`${API}/api/v1/admin/analytics/overview`, { headers: authHeaders }),
           fetch(`${API}/api/v1/admin/analytics/poi-stats`, { headers: authHeaders }),
           fetch(`${API}/api/v1/admin/analytics/events-timeline`, { headers: authHeaders }),
-        ]);
-        if (!overviewResponse.ok || !poiStatsResponse.ok || !timelineResponse.ok) {
-          throw new Error("Không thể tải dữ liệu thống kê");
+      ]);
+
+      if (!mounted) return;
+
+      const [overviewResult, poiStatsResult, timelineResult] = responses;
+      if (overviewResult.status === "fulfilled") {
+        if (overviewResult.value.ok) {
+          setOverview((await overviewResult.value.json()) as Overview);
+        } else {
+          errors.push(`Tổng quan (${overviewResult.value.status})`);
         }
-        const [nextOverview, nextPoiStats, nextTimeline] = await Promise.all([
-          overviewResponse.json() as Promise<Overview>,
-          poiStatsResponse.json() as Promise<PoiStats>,
-          timelineResponse.json() as Promise<TimelineItem[]>,
-        ]);
-        if (mounted) {
-          setOverview(nextOverview);
-          setPoiStats(nextPoiStats);
-          setTimeline(nextTimeline);
-          setAnalyticsError("");
-        }
-      } catch (error) {
-        if (mounted) {
-          setAnalyticsError(
-            error instanceof TypeError
-              ? "Mất kết nối máy chủ; thống kê sẽ tự thử lại sau 10 giây."
-              : error instanceof Error
-                ? error.message
-                : "Không thể tải dữ liệu thống kê; hệ thống sẽ tự thử lại.",
-          );
-        }
-      } finally {
-        if (mounted) setLoading(false);
+      } else {
+        errors.push("Tổng quan (mất kết nối)");
       }
+
+      if (poiStatsResult.status === "fulfilled") {
+        if (poiStatsResult.value.ok) {
+          setPoiStats((await poiStatsResult.value.json()) as PoiStats);
+        } else {
+          errors.push(`Thống kê POI (${poiStatsResult.value.status})`);
+        }
+      } else {
+        errors.push("Thống kê POI (mất kết nối)");
+      }
+
+      if (timelineResult.status === "fulfilled") {
+        if (timelineResult.value.ok) {
+          setTimeline((await timelineResult.value.json()) as TimelineItem[]);
+        } else {
+          errors.push(`Biểu đồ lượt nghe (${timelineResult.value.status})`);
+        }
+      } else {
+        errors.push("Biểu đồ lượt nghe (mất kết nối)");
+      }
+
+      setAnalyticsError(
+        errors.length > 0
+          ? `Một phần thống kê chưa tải được: ${errors.join(", ")}. Hệ thống sẽ tự thử lại sau 10 giây.`
+          : "",
+      );
+      setLoading(false);
     };
     setLoading(true);
     void loadAnalytics();

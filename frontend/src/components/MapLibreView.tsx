@@ -77,6 +77,7 @@ export const MapLibreView: React.FC<MapLibreViewProps> = ({
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
+  const hasCenteredOnUserRef = useRef(false);
   const [styleMode, setStyleMode] = useState<"osm" | "satellite">("osm");
   const [mapLoaded, setMapLoaded] = useState(false);
 
@@ -192,14 +193,8 @@ export const MapLibreView: React.FC<MapLibreViewProps> = ({
         userMarkerRef.current.setLngLat([userCoords.longitude, userCoords.latitude]);
       }
 
-      // If user has nearby POIs with distance, fit bounds to show both user and closest POIs!
-      const poisWithDist = pois.filter((p) => p.distance_m !== undefined);
-      if (poisWithDist.length > 0) {
-        const bounds = new maplibregl.LngLatBounds();
-        bounds.extend([userCoords.longitude, userCoords.latitude]);
-        poisWithDist.slice(0, 2).forEach((p) => bounds.extend([p.longitude, p.latitude]));
-        mapRef.current.fitBounds(bounds, { padding: 80, maxZoom: 15.5, duration: 1200 });
-      } else {
+      if (!hasCenteredOnUserRef.current) {
+        hasCenteredOnUserRef.current = true;
         mapRef.current.flyTo({
           center: [userCoords.longitude, userCoords.latitude],
           zoom: 15,
@@ -209,6 +204,7 @@ export const MapLibreView: React.FC<MapLibreViewProps> = ({
     } else if (userMarkerRef.current) {
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
+      hasCenteredOnUserRef.current = false;
     }
   }, [userCoords, mapLoaded]);
 
