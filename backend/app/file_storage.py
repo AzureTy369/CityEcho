@@ -29,14 +29,24 @@ def _safe_stem(name: str) -> str:
 
 
 def save_upload(file: UploadFile, kind: str, poi_id: str, payload: bytes) -> tuple[str, int]:
+    return save_media_file(file.filename or "", file.content_type, kind, poi_id, payload)
+
+
+def save_media_file(
+    filename: str,
+    content_type: str | None,
+    kind: str,
+    poi_id: str,
+    payload: bytes,
+) -> tuple[str, int]:
     if kind not in ALLOWED_KINDS:
         raise HTTPException(status_code=422, detail="Loại media không được hỗ trợ")
     if not SAFE_ID.fullmatch(poi_id):
         raise HTTPException(status_code=422, detail="Mã POI không hợp lệ")
     types = IMAGE_TYPES if kind == "images" else AUDIO_TYPES
     limit = MAX_IMAGE_BYTES if kind == "images" else MAX_AUDIO_BYTES
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
-    suffix = types.get(content_type)
+    normalized_type = (content_type or "").split(";")[0].strip().lower()
+    suffix = types.get(normalized_type)
     if not suffix:
         raise HTTPException(status_code=422, detail=f"Định dạng {kind} không được hỗ trợ")
     if not payload:
@@ -45,6 +55,6 @@ def save_upload(file: UploadFile, kind: str, poi_id: str, payload: bytes) -> tup
         raise HTTPException(status_code=422, detail="File vượt quá dung lượng cho phép")
     folder = media_root() / "uploads" / poi_id
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{kind}-{_safe_stem(file.filename or kind)}-{uuid.uuid4().hex[:8]}{suffix}"
+    path = folder / f"{kind}-{_safe_stem(filename or kind)}-{uuid.uuid4().hex[:8]}{suffix}"
     path.write_bytes(payload)
     return public_url(path.relative_to(media_root()).as_posix()), len(payload)

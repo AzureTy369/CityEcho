@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 import {
   BarChart,
   Bar,
@@ -15,7 +16,7 @@ import {
   Line,
 } from "recharts";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || (window.location.port === "5173" ? "" : "http://localhost:8000");
 
 // Màu sắc chuẩn CityEcho
 const COLORS = ["#6366f1", "#22d3ee", "#f59e0b", "#10b981", "#f43f5e", "#a78bfa"];
@@ -41,6 +42,20 @@ interface PoiStats {
 interface TimelineItem {
   date: string;
   plays: number;
+}
+
+interface VisitorSession {
+  device_id: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_path: string;
+  entry_source: "DIRECT" | "QR";
+  is_active: boolean;
+}
+
+interface VisitorOverview {
+  active_count: number;
+  sessions: VisitorSession[];
 }
 
 interface Props {
@@ -69,32 +84,111 @@ export default function AnalyticsDashboard({ token, onError }: Props) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [poiStats, setPoiStats] = useState<PoiStats | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [visitors, setVisitors] = useState<VisitorOverview | null>(null);
+  const [websiteQr, setWebsiteQr] = useState("");
   const [loading, setLoading] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const [visitorsError, setVisitorsError] = useState("");
 
   const authHeaders = { Authorization: `Bearer ${token}` };
+  const websiteUrl = useMemo(() => {
+    const url = new URL(window.location.href);
+    url.pathname = "/";
+    url.search = "?join=1";
+    url.hash = "";
+    return url.toString();
+  }, []);
 
   useEffect(() => {
     if (!token) return;
+    let mounted = true;
+    const loadAnalytics = async () => {
+      try {
+        const [overviewResponse, poiStatsResponse, timelineResponse] = await Promise.all([
+          fetch(`${API}/api/v1/admin/analytics/overview`, { headers: authHeaders }),
+          fetch(`${API}/api/v1/admin/analytics/poi-stats`, { headers: authHeaders }),
+          fetch(`${API}/api/v1/admin/analytics/events-timeline`, { headers: authHeaders }),
+        ]);
+        if (!overviewResponse.ok || !poiStatsResponse.ok || !timelineResponse.ok) {
+          throw new Error("Không thể tải dữ liệu thống kê");
+        }
+        const [nextOverview, nextPoiStats, nextTimeline] = await Promise.all([
+          overviewResponse.json() as Promise<Overview>,
+          poiStatsResponse.json() as Promise<PoiStats>,
+          timelineResponse.json() as Promise<TimelineItem[]>,
+        ]);
+        if (mounted) {
+          setOverview(nextOverview);
+          setPoiStats(nextPoiStats);
+          setTimeline(nextTimeline);
+          setAnalyticsError("");
+        }
+      } catch (error) {
+        if (mounted) {
+          setAnalyticsError(
+            error instanceof TypeError
+              ? "Mất kết nối máy chủ; thống kê sẽ tự thử lại sau 10 giây."
+              : error instanceof Error
+                ? error.message
+                : "Không thể tải dữ liệu thống kê; hệ thống sẽ tự thử lại.",
+          );
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
     setLoading(true);
-    Promise.all([
-      fetch(`${API}/api/v1/admin/analytics/overview`, { headers: authHeaders })
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => null),
-      fetch(`${API}/api/v1/admin/analytics/poi-stats`, { headers: authHeaders })
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => null),
-      fetch(`${API}/api/v1/admin/analytics/events-timeline`, { headers: authHeaders })
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => []),
-    ])
-      .then(([ov, ps, tl]) => {
-        if (ov) setOverview(ov);
-        if (ps) setPoiStats(ps);
-        if (tl) setTimeline(tl);
-      })
-      .catch(() => onError("Không thể tải dữ liệu thống kê"))
-      .finally(() => setLoading(false));
+    void loadAnalytics();
+    const intervalId = window.setInterval(loadAnalytics, 10_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
   }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let mounted = true;
+    const loadVisitors = async () => {
+      try {
+        const response = await fetch(`${API}/api/v1/admin/analytics/visitor-sessions`, {
+          headers: authHeaders,
+        });
+        if (!response.ok) throw new Error("Không thể tải trạng thái thiết bị truy cập");
+        const data = (await response.json()) as VisitorOverview;
+        if (mounted) {
+          setVisitors(data);
+          setVisitorsError("");
+        }
+      } catch (error) {
+        if (mounted) {
+          setVisitorsError(
+            error instanceof TypeError
+              ? "Mất kết nối máy chủ; trạng thái thiết bị sẽ tự thử lại sau 10 giây."
+              : error instanceof Error
+                ? error.message
+                : "Không thể tải trạng thái thiết bị; hệ thống sẽ tự thử lại.",
+          );
+        }
+      }
+    };
+    void loadVisitors();
+    const intervalId = window.setInterval(loadVisitors, 10_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [token]);
+
+  useEffect(() => {
+    QRCode.toDataURL(websiteUrl, {
+      width: 220,
+      margin: 2,
+      color: { dark: "#102a43", light: "#ffffff" },
+    })
+      .then(setWebsiteQr)
+      .catch(() => onError("Không thể tạo mã QR trang chủ"));
+  }, [websiteUrl, onError]);
 
   if (loading) {
     return (
@@ -118,6 +212,11 @@ export default function AnalyticsDashboard({ token, onError }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", marginTop: "10px" }}>
+      {(analyticsError || visitorsError) && (
+        <div role="status" style={{ padding: "10px 14px", borderRadius: "8px", background: "#fff5e5", color: "#8a5a16", fontSize: "13px" }}>
+          {analyticsError || visitorsError}
+        </div>
+      )}
       {/* ─── KPI Metrics ─── */}
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
         <div style={{ background: "#fff", border: "1px solid #e8e3da", borderRadius: "10px", padding: "18px 20px", display: "flex", flexDirection: "column", gap: "4px", boxShadow: "0 2px 8px rgba(16,42,69,0.04)" }}>
@@ -141,6 +240,57 @@ export default function AnalyticsDashboard({ token, onError }: Props) {
             {overview ? Math.round((overview.total_duration || 0) / 60) : 0} <span style={{ fontSize: "16px", color: "#8c9998", fontWeight: 400 }}>phút</span>
           </strong>
           <span style={{ fontSize: "11px", color: "#718385" }}>Tổng thời lượng du khách lắng nghe</span>
+        </div>
+      </section>
+
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px" }}>
+        <div style={{ background: "#fff", border: "1px solid #e8e3da", borderRadius: "10px", padding: "20px 22px", boxShadow: "0 2px 8px rgba(16,42,69,0.04)" }}>
+          <h3 style={{ font: "600 16px Fraunces, serif", color: "#102a43", margin: "0 0 8px" }}>Thiết bị đang truy cập</h3>
+          <strong style={{ display: "block", font: "700 36px Fraunces, serif", color: "#1e8449" }}>{visitors?.active_count ?? 0}</strong>
+          <p style={{ color: "#718385", fontSize: "12px", margin: "4px 0 14px" }}>
+            Đếm profile trình duyệt có tín hiệu trong 1 phút gần nhất; tự cập nhật mỗi 10 giây. Profile đã từng vào lại sẽ được nhận diện, không tạo thiết bị mới.
+          </p>
+          {visitors && visitors.sessions.length > 0 ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", textAlign: "left" }}>
+                <thead><tr><th>Trình duyệt</th><th>Nguồn</th><th>Truy cập gần nhất</th><th>Trạng thái</th></tr></thead>
+                <tbody>
+                  {visitors.sessions.map((session) => (
+                    <tr key={session.device_id}>
+                      <td title={session.device_id}>{session.device_id.slice(0, 8)}…</td>
+                      <td>{session.entry_source === "QR" ? "QR" : "Trực tiếp"}</td>
+                      <td>{new Date(session.last_seen_at).toLocaleString("vi-VN")}</td>
+                      <td style={{ color: session.is_active ? "#1e8449" : "#899595", fontWeight: 700 }}>
+                        {session.is_active ? "● Active" : "○ Offline"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p style={{ color: "#8c9998", fontSize: "12px" }}>Chưa ghi nhận thiết bị truy cập.</p>}
+          <small style={{ display: "block", color: "#8c9998", marginTop: "10px" }}>
+            Thiết bị tắt sẽ chuyển Offline sau tối đa 1 phút; bản ghi Offline vẫn hiện trong danh sách. Mỗi profile trên từng địa chỉ web được tính riêng; không lưu IP hay thông tin cá nhân.
+          </small>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid #e8e3da", borderRadius: "10px", padding: "20px 22px", boxShadow: "0 2px 8px rgba(16,42,69,0.04)", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+          <h3 style={{ font: "600 16px Fraunces, serif", color: "#102a43", margin: "0 0 8px" }}>QR tham gia CityEcho</h3>
+          <p style={{ color: "#718385", fontSize: "12px", margin: "0 0 10px" }}>Quét mã để mở trang chủ trên điện thoại.</p>
+          {websiteQr && <img src={websiteQr} alt="QR mở trang chủ CityEcho" width={180} height={180} />}
+          <code style={{ fontSize: "11px", overflowWrap: "anywhere", color: "#718385" }}>{websiteUrl}</code>
+          {websiteQr && (
+            <a
+              className="secondary"
+              href={websiteQr}
+              download="cityecho-website-qr.png"
+              style={{ marginTop: "12px", textDecoration: "none" }}
+            >
+              Tải QR trang chủ
+            </a>
+          )}
+          <small style={{ color: "#8c9998", marginTop: "8px" }}>
+            Khi chạy local, hãy mở web bằng địa chỉ LAN hoặc domain để điện thoại quét được; mã localhost chỉ dùng trên chính máy đó.
+          </small>
         </div>
       </section>
 

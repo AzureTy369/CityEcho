@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
 import { ArrowLeft, Compass, Headphones, Layers, LocateFixed, MapPin, Menu, Play, QrCode, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { mapPinStyle, mediaUrl, samplePois, type Poi, type Status } from "./samplePois";
+import { categoryLabel, languageLabel, translate } from "./i18n";
 import { MapLibreView } from "./components/MapLibreView";
 import { LocationPickerMap } from "./components/LocationPickerMap";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
@@ -14,13 +15,101 @@ const fallback = samplePois;
 const img = (poi: Poi) => mediaUrl(API, poi.image_url);
 const audioSrc = (poi: Poi) => mediaUrl(API, poi.audio_url || "");
 
-async function loadPois(): Promise<Poi[]> { try { const res = await fetch(`${API}/api/v1/pois`); if (!res.ok) throw new Error("API unavailable"); return (await res.json()).items; } catch { return fallback; } }
+async function loadPois(language: string): Promise<Poi[]> {
+  const pageSize = 100;
+  const pois: Poi[] = [];
+  let total = 0;
+  let page = 1;
+
+  try {
+    do {
+      const params = new URLSearchParams({ page: String(page), limit: String(pageSize), lang: language });
+      const response = await fetch(`${API}/api/v1/pois?${params}`);
+      if (!response.ok) throw new Error(`Không thể tải POI (HTTP ${response.status})`);
+
+      const result = (await response.json()) as { items: Poi[]; total: number };
+      if (!Array.isArray(result.items) || !Number.isInteger(result.total)) {
+        throw new Error("Dữ liệu danh sách POI từ máy chủ không hợp lệ");
+      }
+      if (result.items.length === 0 && pois.length < result.total) {
+        throw new Error("Máy chủ trả về trang POI rỗng trước khi tải đủ dữ liệu");
+      }
+
+      pois.push(...result.items);
+      total = result.total;
+      page += 1;
+    } while (pois.length < total);
+
+    return pois;
+  } catch (error) {
+    console.error("Không thể tải toàn bộ POI từ API; đang dùng dữ liệu mẫu.", error);
+    return fallback;
+  }
+}
+
+function getVisitorDeviceId(): string {
+  const key = "cityecho-visitor-id";
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored && /^[a-f0-9-]{36}$/.test(stored)) return stored;
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    return id;
+  }
+}
+
+function getSavedLanguage(): string {
+  const requested = new URLSearchParams(window.location.search).get("lang");
+  if (requested && /^[a-zA-Z-]{2,10}$/.test(requested)) return requested.toLowerCase();
+  try {
+    const saved = localStorage.getItem("cityecho-language");
+    if (saved) return saved;
+  } catch {
+    // Continue with the browser's locale when storage is unavailable.
+  }
+  return navigator.language.toLowerCase().startsWith("vi") ? "vi" : "en";
+}
+
+function LanguageSelector({
+  language,
+  languages,
+  onChange,
+}: {
+  language: string;
+  languages: string[];
+  onChange: (language: string) => void;
+}) {
+  return (
+    <label className="language-picker">
+      <span className="sr-only">{translate(language, "language")}</span>
+      <select aria-label={translate(language, "language")} value={language} onChange={(event) => onChange(event.target.value)}>
+        {languages.map((code) => <option key={code} value={code}>{languageLabel(code)}</option>)}
+      </select>
+    </label>
+  );
+}
 
 function App() {
+  const [language, setLanguage] = useState(getSavedLanguage);
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>(["vi", "en"]);
   const [pois, setPois] = useState<Poi[]>(fallback);
   const [selected, setSelected] = useState<Poi | null>(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
+  const [poiPage, setPoiPage] = useState(1);
   const [locating, setLocating] = useState(false);
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [mapType, setMapType] = useState<"maplibre" | "artistic">("maplibre");
@@ -42,12 +131,80 @@ function App() {
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
   const currentPoiIdRef = useRef<string | null>(null);
   const cooldownRef = useRef(new Map<string, number>());
-  useEffect(() => { loadPois().then(setPois); }, []);
+  const narrationStartedAtRef = useRef<number | null>(null);
+  const narrationElapsedMsRef = useRef(0);
+  const text = (key: Parameters<typeof translate>[1], values?: Record<string, string | number>) =>
+    translate(language, key, values);
+  const narrationLabel = (poi: Poi) => {
+    const narrationLanguage = poi.translation.language_code || "vi";
+    if (narrationLanguage.toLowerCase().startsWith("vi")) return text("vietnameseNarration");
+    if (narrationLanguage.toLowerCase() === "en") return text("englishNarration");
+    return text("narrationInLanguage", { language: narrationLanguage.toUpperCase() });
+  };
+  const changeLanguage = (nextLanguage: string) => {
+    const activePoi = qrPoi?.id === activePoiId
+      ? qrPoi
+      : selected?.id === activePoiId ? selected : pois.find((poi) => poi.id === activePoiId);
+    if (activePoi) stopNarration(activePoi);
+    setLanguage(nextLanguage);
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has("qr")) {
+      urlParams.set("lang", nextLanguage);
+      window.history.replaceState(null, "", `${window.location.pathname}?${urlParams}`);
+    }
+    try {
+      localStorage.setItem("cityecho-language", nextLanguage);
+    } catch {
+      console.warn("Không thể lưu ngôn ngữ đã chọn vào trình duyệt.");
+    }
+  };
+  useEffect(() => {
+    loadPois(language).then((loadedPois) => {
+      setPois(loadedPois);
+      setSelected((current) => current ? loadedPois.find((poi) => poi.id === current.id) ?? current : null);
+    });
+  }, [language]);
+  useEffect(() => {
+    fetch(`${API}/api/v1/languages`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Không thể tải danh sách ngôn ngữ (HTTP ${response.status})`);
+        return response.json() as Promise<string[]>;
+      })
+      .then((languages) => setAvailableLanguages(Array.from(new Set(["vi", "en", ...languages]))))
+      .catch((error) => console.error("Không thể tải danh sách ngôn ngữ.", error));
+  }, []);
+  useEffect(() => {
+    const deviceId = getVisitorDeviceId();
+    const params = new URLSearchParams(window.location.search);
+    const source = params.has("join") || params.has("qr") ? "QR" : "DIRECT";
+    const heartbeat = () => {
+      fetch(`${API}/api/v1/visitor-sessions/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: deviceId,
+          path: `${window.location.pathname}${window.location.search}`,
+          source,
+        }),
+      }).catch(() => undefined);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") heartbeat();
+    };
+    heartbeat();
+    const intervalId = window.setInterval(heartbeat, 10_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("qr");
     if (!code) return;
     setQrLoading(true);
-    fetch(`${API}/api/v1/qr/${encodeURIComponent(code)}`)
+    setQrError("");
+    fetch(`${API}/api/v1/qr/${encodeURIComponent(code)}?lang=${encodeURIComponent(language)}`)
       .then((response) => {
         if (!response.ok) throw new Error("QR Code không hợp lệ hoặc POI chưa xuất bản");
         return response.json();
@@ -55,28 +212,51 @@ function App() {
       .then(setQrPoi)
       .catch((error) => setQrError(error instanceof Error ? error.message : "Không thể mở QR Code"))
       .finally(() => setQrLoading(false));
-  }, []);
+  }, [language]);
   const categories = useMemo(() => ["all", ...Array.from(new Set(pois.map((p) => p.category)))], [pois]);
-  const visible = pois.filter((p) => (category === "all" || p.category === category) && p.translation.name.toLowerCase().includes(query.toLowerCase()));
+  const visible = pois.filter((p) => (category === "all" || p.category === category) && `${p.translation.name} ${p.translation.description}`.toLowerCase().includes(query.toLowerCase()));
+  const poisPerPage = 12;
+  const totalPoiPages = Math.max(1, Math.ceil(visible.length / poisPerPage));
+  const currentPoiPage = Math.min(poiPage, totalPoiPages);
+  const pagedVisible = visible.slice((currentPoiPage - 1) * poisPerPage, currentPoiPage * poisPerPage);
+  useEffect(() => {
+    setPoiPage(1);
+  }, [query, category, language]);
   useEffect(() => {
     if (!selected) {
       setQrImage("");
       return;
     }
-    const url = `${window.location.origin}/?qr=${encodeURIComponent(selected.qr_code)}`;
+    const url = `${window.location.origin}/?qr=${encodeURIComponent(selected.qr_code)}&lang=${encodeURIComponent(language)}`;
     QRCode.toDataURL(url, { width: 220, margin: 2, color: { dark: "#102a43", light: "#ffffff" } })
       .then(setQrImage)
       .catch(() => setQrImage(""));
-  }, [selected]);
-  const recordNarration = (poi: Poi, source: string, eventType: "start" | "finish") => {
+  }, [selected, language]);
+  const recordNarration = (poi: Poi, source: string, eventType: "start" | "finish", durationSeconds = 0, completed = false) => {
     fetch(`${API}/api/v1/narration-events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ poi_id: poi.id, source, event_type: eventType, duration_seconds: eventType === "finish" ? 72 : 0, completed: eventType === "finish", session_id: sessionStorage.getItem("cityecho-session") || "web-demo" }),
+      body: JSON.stringify({ poi_id: poi.id, source, event_type: eventType, duration_seconds: durationSeconds, completed, session_id: sessionStorage.getItem("cityecho-session") || "web-demo" }),
     }).catch(() => undefined);
+  };
+  const startNarrationTimer = () => {
+    narrationStartedAtRef.current = performance.now();
+  };
+  const pauseNarrationTimer = () => {
+    if (narrationStartedAtRef.current !== null) {
+      narrationElapsedMsRef.current += performance.now() - narrationStartedAtRef.current;
+      narrationStartedAtRef.current = null;
+    }
+  };
+  const finishNarration = (poi: Poi, source: string, completed: boolean) => {
+    pauseNarrationTimer();
+    const durationSeconds = Math.floor(narrationElapsedMsRef.current / 1000);
+    narrationElapsedMsRef.current = 0;
+    recordNarration(poi, source, "finish", durationSeconds, completed);
   };
   const playNarration = async (poi: Poi, nextPlaying: boolean, source = "MANUAL") => {
     if (!nextPlaying) {
+      pauseNarrationTimer();
       audioRef.current?.pause();
       window.speechSynthesis.pause();
       setPlaying(false);
@@ -85,6 +265,7 @@ function App() {
       return;
     }
     if (paused && activePoiId === poi.id) {
+      startNarrationTimer();
       if (poi.audio_url && audioRef.current) {
         audioRef.current.play().catch(() => undefined);
       } else {
@@ -110,9 +291,11 @@ function App() {
     setPlaying(true);
     playingRef.current = true;
     setPaused(false);
+    narrationElapsedMsRef.current = 0;
+    startNarrationTimer();
     recordNarration(poi, source, "start");
     setNarrationNotice("");
-    if (poi.audio_url) {
+    if (poi.audio_url && (poi.translation.language_code || "vi").toLowerCase().startsWith("vi")) {
       const audio = audioRef.current || new Audio();
       audioRef.current = audio;
       audio.src = audioSrc(poi);
@@ -122,12 +305,12 @@ function App() {
         setPaused(false);
         setActivePoiId(null);
         currentPoiIdRef.current = null;
-        recordNarration(poi, source, "finish");
+        finishNarration(poi, source, true);
       };
       try {
         await audio.play();
       } catch {
-        setNarrationNotice("Trình duyệt chặn audio tự động. Hãy bấm nút phát lại.");
+        setNarrationNotice(text("audioAutoplayBlocked"));
         setPlaying(false);
         setPaused(false);
         setActivePoiId(null);
@@ -140,12 +323,15 @@ function App() {
       setPaused(false);
       setActivePoiId(null);
       currentPoiIdRef.current = null;
-      setNarrationNotice("Trình duyệt không hỗ trợ đọc thuyết minh. Hãy dùng Chrome hoặc Edge.");
+      setNarrationNotice(text("unsupportedSpeech"));
       return;
     }
     const utterance = new SpeechSynthesisUtterance(poi.translation.narration_text);
     speechRef.current = utterance;
-    utterance.lang = "vi-VN";
+    const narrationLanguage = poi.translation.language_code || language;
+    utterance.lang = narrationLanguage.toLowerCase().startsWith("vi")
+      ? "vi-VN"
+      : narrationLanguage.toLowerCase() === "en" ? "en-US" : narrationLanguage;
     utterance.rate = 0.95;
     utterance.onend = () => {
       if (currentPoiIdRef.current === poi.id) {
@@ -154,7 +340,7 @@ function App() {
         setActivePoiId(null);
         currentPoiIdRef.current = null;
         speechRef.current = null;
-        recordNarration(poi, source, "finish");
+        finishNarration(poi, source, true);
       }
     };
     utterance.onerror = (e: SpeechSynthesisErrorEvent) => {
@@ -164,7 +350,7 @@ function App() {
         setPaused(false);
         setActivePoiId(null);
         currentPoiIdRef.current = null;
-        setNarrationNotice("Không thể phát thuyết minh trên thiết bị này.");
+        setNarrationNotice(text("speechUnavailable"));
       }
     };
     setTimeout(() => {
@@ -174,6 +360,7 @@ function App() {
     }, 40);
   };
   const stopNarration = (poi: Poi, source = "MANUAL") => {
+    pauseNarrationTimer();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -188,7 +375,7 @@ function App() {
     setActivePoiId(null);
     setPlaying(false);
     setPaused(false);
-    recordNarration(poi, source, "finish");
+    finishNarration(poi, source, false);
   };
   const toggleNarration = (poi: Poi, source = "MANUAL") => {
     if (playing && !paused && activePoiId === poi.id) return playNarration(poi, false, source);
@@ -201,37 +388,37 @@ function App() {
   useEffect(() => {
     if (!autoNarration) return;
     if (!navigator.geolocation) {
-      setAutoMessage("Thiết bị không hỗ trợ định vị GPS.");
+      setAutoMessage(text("gpsUnsupported"));
       setAutoNarration(false);
       return;
     }
-    setAutoMessage("Đang theo dõi vị trí. Hãy cho phép GPS trên trình duyệt.");
+    setAutoMessage(text("gpsTracking"));
     const watchId = navigator.geolocation.watchPosition(async ({ coords }) => {
       setUserCoords({ latitude: coords.latitude, longitude: coords.longitude });
       try {
-        const response = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}`);
-        if (!response.ok) throw new Error("Không thể tải POI gần vị trí");
+        const response = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}&lang=${encodeURIComponent(language)}`);
+        if (!response.ok) throw new Error(text("gpsLoadError"));
         const candidates: Poi[] = await response.json();
         const now = Date.now();
         const candidate = candidates.find((poi) => (poi.distance_m ?? Infinity) <= poi.radius_m && now - (cooldownRef.current.get(poi.id) || 0) >= 5 * 60 * 1000);
         if (!candidate || playingRef.current) return;
         cooldownRef.current.set(candidate.id, now);
         setSelected(candidate);
-        setAutoMessage(`Đã phát tự động: ${candidate.translation.name}`);
+        setAutoMessage(text("gpsAutoPlay", { name: candidate.translation.name }));
         await playNarration(candidate, true, "GPS");
       } catch (error) {
-        setAutoMessage(error instanceof Error ? error.message : "Không thể kiểm tra geofence");
+        setAutoMessage(error instanceof Error ? error.message : text("geofenceUnavailable"));
       }
-    }, () => setAutoMessage("Chưa được cấp quyền GPS. Bạn vẫn có thể nghe thủ công hoặc quét QR."), { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 });
+    }, () => setAutoMessage(text("gpsNoPermission")), { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 });
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [autoNarration]);
+  }, [autoNarration, language]);
   const locate = () => {
     setLocating(true);
     setAutoMessage("");
     navigator.geolocation?.getCurrentPosition(async ({ coords }) => {
       setUserCoords({ latitude: coords.latitude, longitude: coords.longitude });
       try {
-        const res = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}&max_distance_m=50000`);
+        const res = await fetch(`${API}/api/v1/pois/nearby?lat=${coords.latitude}&lng=${coords.longitude}&max_distance_m=50000&lang=${encodeURIComponent(language)}`);
         if (res.ok) {
           const nearPois: Poi[] = await res.json();
           setNearby(nearPois);
@@ -253,27 +440,27 @@ function App() {
             const distFormatted = closest.distance_m !== undefined
               ? (closest.distance_m < 1000 ? `${Math.round(closest.distance_m)}m` : `${(closest.distance_m / 1000).toFixed(1)}km`)
               : "";
-            setAutoMessage(`Đã tìm thấy ${nearPois.length} địa điểm quanh bạn. Gần nhất: ${closest.translation.name} (${distFormatted})`);
+            setAutoMessage(text("gpsFoundNearest", { count: nearPois.length, name: closest.translation.name, distance: distFormatted }));
             setSelected(closest);
           } else {
-            setAutoMessage("Không tìm thấy địa điểm nào trong bán kính 50km.");
+            setAutoMessage(text("noNearby"));
           }
           setTimeout(() => {
             document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" });
           }, 120);
         } else {
           setNearby([]);
-          setAutoMessage("Không thể lấy danh sách địa điểm lân cận.");
+          setAutoMessage(text("nearbyUnavailable"));
         }
       } catch {
         setNearby([]);
-        setAutoMessage("Không thể kết nối đến máy chủ.");
+        setAutoMessage(text("locateError"));
       } finally {
         setLocating(false);
       }
     }, (err) => {
       setLocating(false);
-      setAutoMessage(`Không thể lấy vị trí GPS: ${err.message || "Vui lòng cấp quyền định vị."}`);
+      setAutoMessage(text("gpsError", { message: err.message || text("gpsNoPermission") }));
     }, { enableHighAccuracy: true, timeout: 10000 });
   };
   const simulateGps = async (poiId = "sgu-main") => {
@@ -282,20 +469,20 @@ function App() {
     setLocating(true);
     setUserCoords({ latitude: poi.latitude, longitude: poi.longitude });
     try {
-      const response = await fetch(`${API}/api/v1/geofence/evaluate?lat=${poi.latitude}&lng=${poi.longitude}`);
-      if (!response.ok) throw new Error("Không thể mô phỏng vị trí");
+      const response = await fetch(`${API}/api/v1/geofence/evaluate?lat=${poi.latitude}&lng=${poi.longitude}&lang=${encodeURIComponent(language)}`);
+      if (!response.ok) throw new Error(text("gpsSimulationError"));
       const result = await response.json();
       setNearby(result.candidates || []);
       const candidate = result.candidate as Poi | null;
       if (candidate) {
         setSelected(candidate);
-        setAutoMessage(`Mô phỏng GPS đã vào vùng: ${candidate.translation.name}`);
+        setAutoMessage(text("gpsSimulationActive", { name: candidate.translation.name }));
         await playNarration(candidate, true, "GPS");
       } else {
-        setAutoMessage("Vị trí mô phỏng chưa nằm trong geofence.");
+        setAutoMessage(text("gpsSimulationOutside"));
       }
     } catch (error) {
-      setAutoMessage(error instanceof Error ? error.message : "Không thể mô phỏng GPS");
+      setAutoMessage(error instanceof Error ? error.message : text("gpsSimulationError"));
     } finally {
       setLocating(false);
     }
@@ -304,25 +491,112 @@ function App() {
     const isQrPlaying = qrPoi ? activePoiId === qrPoi.id && playing && !paused : false;
     const isQrPaused = qrPoi ? activePoiId === qrPoi.id && paused : false;
     const isQrActive = qrPoi ? activePoiId === qrPoi.id && (playing || paused) : false;
-    return <div className="app"><header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div></header><main className="qr-page">{qrLoading ? <div className="qr-state"><QrCode size={42}/><h1>Đang mở câu chuyện...</h1><p>CityEcho đang tìm nội dung từ mã QR.</p></div> : qrError ? <div className="qr-state error"><X size={42}/><h1>Không thể mở QR Code</h1><p>{qrError}</p><button className="primary" onClick={() => { window.location.href = "/"; }}>Về trang khám phá</button></div> : qrPoi ? <div className="qr-story"><span className="eyebrow"><QrCode size={14}/> CITYECHO · QR STORY</span><img src={img(qrPoi)} alt={qrPoi.translation.name}/><span className="tag">{qrPoi.category}</span><h1>{qrPoi.translation.name}</h1><p className="qr-description">{qrPoi.translation.description}</p><div className="qr-narration"><Headphones size={22}/><div><b>Thuyết minh tiếng Việt</b><small>Đã mở bằng QR Code · Không cần GPS</small></div><button className="play" onClick={() => toggleNarration(qrPoi, "QR")}>{isQrPlaying ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => toggleNarration(qrPoi, "QR")}>{isQrPlaying ? "Tạm dừng" : isQrPaused ? "Tiếp tục" : "Nghe câu chuyện"}</button>{isQrActive && <button className="secondary full stop-button" onClick={() => stopNarration(qrPoi, "QR")}>Kết thúc thuyết minh</button>}{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<button className="secondary qr-back" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={16}/> Khám phá các địa điểm khác</button></div> : null}</main><footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer></div>;
+    return (
+      <div className="app">
+        <header className="topbar">
+          <div className="brand"><span className="brand-mark"><Compass size={22} /></span><span>City<span>Echo</span><small>{text("tagline")}</small></span></div>
+          <LanguageSelector language={language} languages={availableLanguages} onChange={changeLanguage} />
+        </header>
+        <main className="qr-page">
+          {qrLoading ? <div className="qr-state"><QrCode size={42} /><h1>{text("qrLoading")}</h1><p>{text("qrLoadingDescription")}</p></div>
+            : qrError ? <div className="qr-state error"><X size={42} /><h1>{text("qrOpenFailed")}</h1><p>{qrError}</p><button className="primary" onClick={() => { window.location.href = "/"; }}>{text("backToExplore")}</button></div>
+              : qrPoi ? <div className="qr-story">
+                <span className="eyebrow"><QrCode size={14} /> {text("qrStory")}</span>
+                <img src={img(qrPoi)} alt={qrPoi.translation.name} />
+                <span className="tag">{qrPoi.category}</span>
+                <h1>{qrPoi.translation.name}</h1>
+                <p className="qr-description">{qrPoi.translation.description}</p>
+                <div className="qr-narration"><Headphones size={22} /><div><b>{narrationLabel(qrPoi)}</b><small>{text("qrOpened")}</small></div><button className="play" onClick={() => toggleNarration(qrPoi, "QR")}>{isQrPlaying ? "Ⅱ" : <Play size={17} fill="currentColor" />}</button></div>
+                <button className="primary full" onClick={() => toggleNarration(qrPoi, "QR")}>{isQrPlaying ? text("pause") : isQrPaused ? text("resume") : text("listenStory")}</button>
+                {isQrActive && <button className="secondary full stop-button" onClick={() => stopNarration(qrPoi, "QR")}>{text("stopNarration")}</button>}
+                {narrationNotice && <p className="narration-notice">{narrationNotice}</p>}
+                <button className="secondary qr-back" onClick={() => { window.location.href = "/"; }}><ArrowLeft size={16} /> {text("otherPlaces")}</button>
+              </div> : null}
+        </main>
+        <footer><span>© 2026 CityEcho</span><span>{text("footer")}</span></footer>
+      </div>
+    );
   }
   const isSelectedPlaying = selected ? activePoiId === selected.id && playing && !paused : false;
   const isSelectedPaused = selected ? activePoiId === selected.id && paused : false;
   const isSelectedActive = selected ? activePoiId === selected.id && (playing || paused) : false;
-  return <div className="app">
-    <header className="topbar"><div className="brand"><span className="brand-mark"><Compass size={22}/></span><span>City<span>Echo</span><small>Âm vang thành phố</small></span></div><nav><button className={view === "explore" ? "active" : ""} onClick={() => setView("explore")}><Compass size={16}/> Khám phá</button><button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><ShieldCheck size={16}/> CMS quản trị</button></nav><button className="menu" onClick={() => setMenuOpen(!menuOpen)}><Menu/></button></header>
-    {view === "admin" ? <Admin pois={pois} setPois={setPois} onBack={() => setView("explore")} /> : <main>
-      <section className="hero"><div><p className="eyebrow"><Sparkles size={14}/> CITYECHO · SGU COLLECTION</p><h1>Đi chậm lại.<br/><em>Nghe thành phố kể.</em></h1><p className="hero-copy">Khám phá những câu chuyện văn hóa, lịch sử quanh Sài Gòn qua bản đồ tương tác và thuyết minh thông minh.</p><div className="hero-actions"><button className="primary" onClick={locate}><LocateFixed size={17}/> {locating ? "Đang tìm vị trí..." : "Tìm địa điểm quanh tôi"}</button><button className={`secondary gps-toggle ${autoNarration ? "enabled" : ""}`} onClick={() => setAutoNarration((value) => !value)}><Headphones size={16}/> {autoNarration ? "Tắt thuyết minh GPS" : "Bật thuyết minh GPS"}</button><button className="secondary demo-gps" onClick={() => simulateGps()}><MapPin size={16}/> Mô phỏng GPS</button><button className="secondary" onClick={() => document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" })}>Xem tất cả POI <ArrowLeft size={16} className="rotate"/></button></div>{autoMessage && <p className="gps-message">{autoMessage}</p>}</div><div className="hero-art"><div className="sun"/><div className="hero-card"><MapPin size={18}/><span>10.7591° N<br/><b>106.6823° E</b></span></div><div className="hero-label">SÀI GÒN<br/><strong>DI SẢN SỐ</strong></div></div></section>
-      {nearby.length > 0 && <section className="nearby"><b><LocateFixed size={16}/> {nearby.length} địa điểm gần bạn</b><span>Đã sắp xếp theo ưu tiên và khoảng cách</span><button onClick={() => setNearby([])}><X size={16}/></button></section>}
-      <section className="explore" id="poi-list"><div className="section-head"><div><p className="eyebrow">BẢN ĐỒ CÂU CHUYỆN</p><h2>Chọn một điểm để bắt đầu</h2></div><div className="filters"><div className="search"><Search size={17}/><input placeholder="Tìm kiếm địa điểm..." value={query} onChange={(e) => setQuery(e.target.value)}/></div><select value={category} onChange={(e) => setCategory(e.target.value)}>{categories.map((c) => <option key={c} value={c}>{c === "all" ? "Tất cả danh mục" : c}</option>)}</select><button type="button" className={`maplibre-toggle-view ${mapType === "maplibre" ? "active" : ""}`} onClick={() => setMapType(m => m === "maplibre" ? "artistic" : "maplibre")} title="Chuyển chế độ xem bản đồ"><Layers size={14}/> {mapType === "maplibre" ? "MapLibre" : "Nghệ thuật"}</button></div></div><div className="content-grid"><div className="map-panel">{mapType === "maplibre" ? <MapLibreView pois={visible} selected={selected} onSelectPoi={setSelected} userCoords={userCoords} onLocateUser={locate} /> : <><div className="map-grid"/>{visible.map((poi, index) => <button key={poi.id} style={mapPinStyle(poi)} className={`map-pin ${selected?.id === poi.id ? "chosen" : ""}`} onClick={() => setSelected(poi)}><MapPin size={21}/><span>{index + 1}</span></button>)}<div className="map-controls"><button onClick={locate}><LocateFixed size={17}/></button><button onClick={() => setSelected(null)}>＋</button></div><div className="map-legend"><span className="legend-dot"/><span>Điểm đã xuất bản</span></div></>}</div><div className="poi-list">{visible.map((poi) => <article className={`poi-card ${selected?.id === poi.id ? "selected" : ""}`} key={poi.id} onClick={() => setSelected(poi)}><img src={img(poi)} alt=""/><div className="poi-body"><div className="poi-top"><span className="tag">{poi.category}</span><span className="poi-number">0{visible.indexOf(poi) + 1}</span></div><h3>{poi.translation.name}</h3><p>{poi.translation.description}</p><div className="poi-meta"><span><Headphones size={14}/> Thuyết minh</span><span><QrCode size={14}/> QR</span>{poi.distance_m !== undefined && <span className="poi-distance-badge"><MapPin size={12}/> Cách {poi.distance_m < 1000 ? `${Math.round(poi.distance_m)}m` : `${(poi.distance_m / 1000).toFixed(1)}km`}</span>}</div></div></article>)}</div></div></section>
-      {selected && <aside className="detail-drawer"><button className="close" onClick={() => setSelected(null)}><X/></button><img src={img(selected)} alt=""/><div className="drawer-content"><span className="tag">{selected.category}</span><h2>{selected.translation.name}</h2><p>{selected.translation.description}</p><div className="audio-box"><div className="audio-icon"><Headphones/></div><div><b>Thuyết minh tiếng Việt</b><small>{selected.audio_url ? "Audio file đã tải lên" : "Đọc tự động bằng trình duyệt"}</small></div><button className="play" onClick={() => toggleNarration(selected)}>{isSelectedPlaying ? "Ⅱ" : <Play size={17} fill="currentColor"/>}</button></div><button className="primary full" onClick={() => toggleNarration(selected)}>{isSelectedPlaying ? "Tạm dừng" : isSelectedPaused ? "Tiếp tục" : "Nghe câu chuyện"}</button>{isSelectedActive && <button className="secondary full stop-button" onClick={() => stopNarration(selected)}>Kết thúc thuyết minh</button>}{narrationNotice && <p className="narration-notice">{narrationNotice}</p>}<div className="coordinates"><MapPin size={16}/> {selected.latitude.toFixed(4)}° N · {selected.longitude.toFixed(4)}° E <span>QR: {selected.qr_code}</span></div>{qrImage && <div className="qr-download"><img src={qrImage} alt={`QR Code ${selected.translation.name}`}/><div><b>QR Code thuyết minh</b><small>Quét để mở không cần GPS</small><a href={qrImage} download={`cityecho-${selected.id}-qr.png`}>Tải QR để in</a></div></div>}</div></aside>}
-    </main>}
-    {menuOpen && <div className="mobile-menu"><button onClick={() => { setView("explore"); setMenuOpen(false); }}>Khám phá</button><button onClick={() => { setView("admin"); setMenuOpen(false); }}>CMS quản trị</button></div>}
-    <footer><span>© 2026 CityEcho</span><span>Khám phá có trách nhiệm · Bảo tồn ký ức địa phương</span></footer>
-  </div>;
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand"><span className="brand-mark"><Compass size={22} /></span><span>City<span>Echo</span><small>{text("tagline")}</small></span></div>
+        <nav>
+          <button className={view === "explore" ? "active" : ""} onClick={() => setView("explore")}><Compass size={16} /> {text("explore")}</button>
+          <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><ShieldCheck size={16} /> {text("admin")}</button>
+        </nav>
+        <LanguageSelector language={language} languages={availableLanguages} onChange={changeLanguage} />
+        {view === "admin" && <span className="cms-language-hint">{text("cmsLanguageHint")}</span>}
+        <button className="menu" onClick={() => setMenuOpen(!menuOpen)}><Menu /></button>
+      </header>
+      {view === "admin" ? <Admin pois={pois} setPois={setPois} onBack={() => setView("explore")} language={language} /> : <main>
+        <section className="hero">
+          <div>
+            <p className="eyebrow"><Sparkles size={14} /> CITYECHO · SGU COLLECTION</p>
+            <h1>{text("heroTitle")}<br /><em>{text("heroTitleSecond")}</em></h1>
+            <p className="hero-copy">{text("heroCopy")}</p>
+            <div className="hero-actions">
+              <button className="primary" onClick={locate}><LocateFixed size={17} /> {locating ? text("findingLocation") : text("findNearby")}</button>
+              <button className={`secondary gps-toggle ${autoNarration ? "enabled" : ""}`} onClick={() => setAutoNarration((value) => !value)}><Headphones size={16} /> {autoNarration ? text("disableGpsNarration") : text("enableGpsNarration")}</button>
+              <button className="secondary demo-gps" onClick={() => simulateGps()}><MapPin size={16} /> {text("simulateGps")}</button>
+              <button className="secondary" onClick={() => document.getElementById("poi-list")?.scrollIntoView({ behavior: "smooth" })}>{text("allPois")} <ArrowLeft size={16} className="rotate" /></button>
+            </div>
+            {autoMessage && <p className="gps-message">{autoMessage}</p>}
+          </div>
+          <div className="hero-art"><div className="sun" /><div className="hero-card"><MapPin size={18} /><span>10.7591° N<br /><b>106.6823° E</b></span></div><div className="hero-label">SÀI GÒN<br /><strong>DI SẢN SỐ</strong></div></div>
+        </section>
+        {nearby.length > 0 && <section className="nearby"><b><LocateFixed size={16} /> {text("nearbyPois", { count: nearby.length })}</b><span>{text("nearbySorted")}</span><button onClick={() => setNearby([])}><X size={16} /></button></section>}
+        <section className="explore" id="poi-list">
+          <div className="section-head">
+            <div><p className="eyebrow">{text("storyMap")}</p><h2>{text("choosePlace")}</h2></div>
+            <div className="filters">
+              <div className="search"><Search size={17} /><input placeholder={text("searchPlaceholder")} value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item} value={item}>{item === "all" ? text("allCategories") : categoryLabel(item, language)}</option>)}</select>
+              <button type="button" className={`maplibre-toggle-view ${mapType === "maplibre" ? "active" : ""}`} onClick={() => setMapType((mode) => mode === "maplibre" ? "artistic" : "maplibre")} title={text("mapMode")}><Layers size={14} /> {mapType === "maplibre" ? "MapLibre" : text("artisticMap")}</button>
+            </div>
+          </div>
+          <div className="content-grid">
+            <div className="map-panel">{mapType === "maplibre" ? <MapLibreView pois={visible} selected={selected} onSelectPoi={setSelected} userCoords={userCoords} onLocateUser={locate} /> : <>
+              <div className="map-grid" />
+              {visible.map((poi, index) => <button key={poi.id} style={mapPinStyle(poi)} className={`map-pin ${selected?.id === poi.id ? "chosen" : ""}`} onClick={() => setSelected(poi)}><MapPin size={21} /><span>{index + 1}</span></button>)}
+              <div className="map-controls"><button onClick={locate}><LocateFixed size={17} /></button><button onClick={() => setSelected(null)}>＋</button></div>
+              <div className="map-legend"><span className="legend-dot" /><span>{text("publishedPoint")}</span></div>
+            </>}</div>
+            <div className="poi-list">{pagedVisible.map((poi, index) => <article className={`poi-card ${selected?.id === poi.id ? "selected" : ""}`} key={poi.id} onClick={() => setSelected(poi)}>
+              <img src={img(poi)} alt="" />
+              <div className="poi-body"><div className="poi-top"><span className="tag">{categoryLabel(poi.category, language)}</span><span className="poi-number">0{index + 1}</span></div><h3>{poi.translation.name}</h3><p>{poi.translation.description}</p>
+                <div className="poi-meta"><span><Headphones size={14} /> {text("narration")}</span><span><QrCode size={14} /> QR</span>{poi.distance_m !== undefined && <span className="poi-distance-badge"><MapPin size={12} /> {text("distance")} {poi.distance_m < 1000 ? `${Math.round(poi.distance_m)}m` : `${(poi.distance_m / 1000).toFixed(1)}km`}</span>}</div>
+              </div>
+            </article>)}</div>
+          </div>
+          <div className="poi-pagination" aria-label="Pagination">
+            <button type="button" className="secondary" disabled={currentPoiPage === 1} onClick={() => setPoiPage((page) => Math.max(1, page - 1))}>{text("previousPage")}</button>
+            <span>{text("pageOf", { page: currentPoiPage, total: totalPoiPages })}</span>
+            <button type="button" className="secondary" disabled={currentPoiPage === totalPoiPages} onClick={() => setPoiPage((page) => Math.min(totalPoiPages, page + 1))}>{text("nextPage")}</button>
+          </div>
+        </section>
+        {selected && <aside className="detail-drawer">
+          <button className="close" onClick={() => setSelected(null)}><X /></button><img src={img(selected)} alt="" />
+          <div className="drawer-content"><span className="tag">{categoryLabel(selected.category, language)}</span><h2>{selected.translation.name}</h2><p>{selected.translation.description}</p>
+            <div className="audio-box"><div className="audio-icon"><Headphones /></div><div><b>{narrationLabel(selected)}</b><small>{selected.audio_url && (selected.translation.language_code || "vi").toLowerCase().startsWith("vi") ? text("uploadedAudio") : text("browserSpeech")}</small></div><button className="play" onClick={() => toggleNarration(selected)}>{isSelectedPlaying ? "Ⅱ" : <Play size={17} fill="currentColor" />}</button></div>
+            <button className="primary full" onClick={() => toggleNarration(selected)}>{isSelectedPlaying ? text("pause") : isSelectedPaused ? text("resume") : text("listenStory")}</button>
+            {isSelectedActive && <button className="secondary full stop-button" onClick={() => stopNarration(selected)}>{text("stopNarration")}</button>}
+            {narrationNotice && <p className="narration-notice">{narrationNotice}</p>}
+            <div className="coordinates"><MapPin size={16} /> {selected.latitude.toFixed(4)}° N · {selected.longitude.toFixed(4)}° E <span>QR: {selected.qr_code}</span></div>
+            {qrImage && <div className="qr-download"><img src={qrImage} alt={`QR Code ${selected.translation.name}`} /><div><b>{text("qrNarration")}</b><small>{text("scanWithoutGps")}</small><a href={qrImage} download={`cityecho-${selected.id}-qr.png`}>{text("downloadQr")}</a></div></div>}
+          </div>
+        </aside>}
+      </main>}
+      {menuOpen && <div className="mobile-menu"><button onClick={() => { setView("explore"); setMenuOpen(false); }}>{text("explore")}</button><button onClick={() => { setView("admin"); setMenuOpen(false); }}>{text("admin")}</button></div>}
+      <footer><span>© 2026 CityEcho</span><span>{text("footer")}</span></footer>
+    </div>
+  );
 }
 
-function Admin({ pois, setPois, onBack }: { pois: Poi[]; setPois: React.Dispatch<React.SetStateAction<Poi[]>>; onBack: () => void }) {
+function Admin({ pois, setPois, onBack, language }: { pois: Poi[]; setPois: React.Dispatch<React.SetStateAction<Poi[]>>; onBack: () => void; language: string }) {
   const [tab, setTab] = useState<"pois" | "analytics">("pois");
   const [status, setStatus] = useState<Status | "ALL">("ALL");
   const [token, setToken] = useState(() => sessionStorage.getItem("cityecho-token") || "");
@@ -337,6 +611,7 @@ function Admin({ pois, setPois, onBack }: { pois: Poi[]; setPois: React.Dispatch
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editingPoi, setEditingPoi] = useState<Poi | null>(null);
+  const [translationLanguage, setTranslationLanguage] = useState("vi");
   const [form, setForm] = useState({ name: "", description: "", narration_text: "", category: "historical", latitude: "10.7591", longitude: "106.6823", radius_m: "40", priority: "3", image_url: "" });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -415,26 +690,30 @@ function Admin({ pois, setPois, onBack }: { pois: Poi[]; setPois: React.Dispatch
           radius_m: Number(form.radius_m),
           priority: Number(form.priority),
           image_url: form.image_url,
-          translation: { language_code: "vi", name: form.name, description: form.description, narration_text: form.narration_text },
+          translation: { language_code: translationLanguage, name: form.name, description: form.description, narration_text: form.narration_text },
         }),
       });
       const withMedia = await uploadMedia(created.id);
       setPois((current) => [withMedia || created, ...current]);
       setShowCreate(false);
       setMessage("Đã tạo POI bản nháp. Hãy bấm 'Xuất bản' hoặc 'Gửi duyệt'.");
+      setTranslationLanguage("vi");
       setForm({ name: "", description: "", narration_text: "", category: "historical", latitude: "10.7591", longitude: "106.6823", radius_m: "40", priority: "3", image_url: "" });
     } catch (error) { setMessage(error instanceof Error ? error.message : "Không thể tạo POI"); }
   };
   const openEdit = (poi: Poi) => {
     setShowCreate(false);
     setEditingPoi(poi);
-    setForm({ name: poi.translation.name, description: poi.translation.description, narration_text: poi.translation.narration_text, category: poi.category, latitude: String(poi.latitude), longitude: String(poi.longitude), radius_m: String(poi.radius_m), priority: String(poi.priority), image_url: poi.image_url });
+    const selectedTranslation = poi.translations?.find((item) => (item.language_code ?? "vi").toLowerCase() === language.toLowerCase());
+    setTranslationLanguage(language);
+    setForm({ name: selectedTranslation?.name ?? "", description: selectedTranslation?.description ?? "", narration_text: selectedTranslation?.narration_text ?? "", category: poi.category, latitude: String(poi.latitude), longitude: String(poi.longitude), radius_m: String(poi.radius_m), priority: String(poi.priority), image_url: poi.image_url });
     setTimeout(() => {
       document.getElementById("poi-edit-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 50);
   };
   const openCreate = () => {
     setEditingPoi(null);
+    setTranslationLanguage("vi");
     setShowCreate(true);
     setTimeout(() => {
       document.getElementById("poi-create-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -453,7 +732,7 @@ function Admin({ pois, setPois, onBack }: { pois: Poi[]; setPois: React.Dispatch
           radius_m: Number(form.radius_m),
           priority: Number(form.priority),
           image_url: form.image_url,
-          translation: { language_code: "vi", name: form.name, description: form.description, narration_text: form.narration_text },
+          translation: { language_code: translationLanguage, name: form.name, description: form.description, narration_text: form.narration_text },
         }),
       });
       const withMedia = await uploadMedia(updated.id);

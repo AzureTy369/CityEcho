@@ -1,4 +1,5 @@
 export type Status = "DRAFT" | "PENDING" | "NEEDS_REVISION" | "PUBLISHED" | "ARCHIVED";
+export type PoiTranslation = { language_code?: string; name: string; description: string; narration_text: string };
 export type Poi = {
   id: string;
   category: string;
@@ -7,7 +8,8 @@ export type Poi = {
   radius_m: number;
   priority: number;
   status: Status;
-  translation: { language_code?: string; name: string; description: string; narration_text: string };
+  translation: PoiTranslation;
+  translations?: PoiTranslation[];
   image_url: string;
   audio_url?: string;
   audio_duration_seconds?: number;

@@ -1,5 +1,5 @@
 """
-storage.py – Persistent storage layer (PostgreSQL via SQLAlchemy).
+PostgreSQL repository and ORM models (SQLAlchemy).
 
 Schema chuẩn hoá ERD:
   roles            – vai trò hệ thống (admin / editor)
@@ -20,7 +20,7 @@ Nếu DATABASE_URL không được set, toàn bộ lớp storage trả về rỗ
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import (
@@ -34,9 +34,15 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete,
+    event as sqlalchemy_event,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
+
+
+VISITOR_ACTIVE_WINDOW = timedelta(minutes=1)
 
 
 # ---------------------------------------------------------------------------
@@ -131,16 +137,19 @@ class PoiRecord(Base):
 
     category_ref: Mapped[CategoryRecord | None] = relationship("CategoryRecord", back_populates="pois")
     translations: Mapped[list[PoiTranslationRecord]] = relationship(
-        "PoiTranslationRecord", back_populates="poi", cascade="all, delete-orphan"
+        "PoiTranslationRecord", back_populates="poi", passive_deletes="all"
     )
     images: Mapped[list[PoiImageRecord]] = relationship(
-        "PoiImageRecord", back_populates="poi", cascade="all, delete-orphan"
+        "PoiImageRecord", back_populates="poi", passive_deletes="all"
     )
     audios: Mapped[list[PoiAudioRecord]] = relationship(
-        "PoiAudioRecord", back_populates="poi", cascade="all, delete-orphan"
+        "PoiAudioRecord", back_populates="poi", passive_deletes="all"
     )
     qr_codes: Mapped[list[QrCodeRecord]] = relationship(
-        "QrCodeRecord", back_populates="poi", cascade="all, delete-orphan"
+        "QrCodeRecord", back_populates="poi", passive_deletes="all"
+    )
+    narration_events: Mapped[list[EventRecord]] = relationship(
+        "EventRecord", back_populates="poi", passive_deletes="all"
     )
 
 
@@ -155,7 +164,7 @@ class PoiTranslationRecord(Base):
     __table_args__ = (UniqueConstraint("poi_id", "language_code", name="uq_poi_lang"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="CASCADE"), nullable=False)
+    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="RESTRICT"), nullable=False)
     language_code: Mapped[str] = mapped_column(String(10), nullable=False, default="vi")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -174,7 +183,7 @@ class PoiImageRecord(Base):
     __tablename__ = "poi_images"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="CASCADE"), nullable=False)
+    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="RESTRICT"), nullable=False)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     alt_text: Mapped[str] = mapped_column(String(255), default="")
     is_cover: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -196,7 +205,7 @@ class PoiAudioRecord(Base):
     __tablename__ = "poi_audios"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="CASCADE"), nullable=False)
+    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="RESTRICT"), nullable=False)
     language_code: Mapped[str] = mapped_column(String(10), default="vi")
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
@@ -217,7 +226,7 @@ class QrCodeRecord(Base):
     __tablename__ = "qr_codes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="CASCADE"), nullable=False)
+    poi_id: Mapped[str] = mapped_column(ForeignKey("pois.id", ondelete="RESTRICT"), nullable=False)
     code: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -236,7 +245,9 @@ class EventRecord(Base):
     __tablename__ = "narration_events"
 
     event_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    poi_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    poi_id: Mapped[str] = mapped_column(
+        ForeignKey("pois.id", ondelete="RESTRICT"), nullable=False
+    )
     source: Mapped[str] = mapped_column(String(20), nullable=False)  # GPS | QR | MANUAL
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # start | finish
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
@@ -246,6 +257,8 @@ class EventRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    poi: Mapped[PoiRecord] = relationship("PoiRecord", back_populates="narration_events")
 
 
 # ---------------------------------------------------------------------------
@@ -271,12 +284,33 @@ class AuditRecord(Base):
 
 
 # ---------------------------------------------------------------------------
-# PersistentStore – lớp dịch vụ truy cập CSDL
+# Bảng 11: visitor_sessions
+# ---------------------------------------------------------------------------
+
+class VisitorSessionRecord(Base):
+    """Phiên truy cập ẩn danh theo trình duyệt, không lưu IP hay thông tin cá nhân."""
+
+    __tablename__ = "visitor_sessions"
+
+    device_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    last_path: Mapped[str] = mapped_column(String(512), default="/", nullable=False)
+    entry_source: Mapped[str] = mapped_column(String(20), default="DIRECT", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# PersistentStore – lớp repository truy cập CSDL
 # ---------------------------------------------------------------------------
 
 class PersistentStore:
     """
-    Lớp trung gian giữa API (main.py) và PostgreSQL.
+    Lớp truy cập dữ liệu được gọi từ application service.
 
     Nếu DATABASE_URL không được cấu hình, `enabled = False` và
     mọi phương thức trả về ngay lập tức (in-memory fallback).
@@ -287,15 +321,22 @@ class PersistentStore:
         self.enabled = bool(self.url)
         self.engine = create_engine(self.url, pool_pre_ping=True) if self.enabled else None
         if self.engine:
+            if self.engine.dialect.name == "sqlite":
+                @sqlalchemy_event.listens_for(self.engine, "connect")
+                def enable_sqlite_foreign_keys(connection, _record):
+                    cursor = connection.cursor()
+                    cursor.execute("PRAGMA foreign_keys=ON")
+                    cursor.close()
+
             Base.metadata.create_all(self.engine)
-            self._seed_categories()
+            self._seed_reference_data()
 
     # ------------------------------------------------------------------
     # Seed dữ liệu ban đầu
     # ------------------------------------------------------------------
 
-    def _seed_categories(self) -> None:
-        """Tạo các danh mục mặc định nếu chưa có."""
+    def _seed_reference_data(self) -> None:
+        """Tạo các danh mục và vai trò mặc định nếu chưa có."""
         default_cats = [
             ("campus", "Trường học / Cơ sở giáo dục", "Campus"),
             ("religious", "Tôn giáo / Tín ngưỡng", "Religious"),
@@ -305,10 +346,26 @@ class PersistentStore:
             ("public-space", "Không gian công cộng", "Public Space"),
         ]
         with Session(self.engine) as session:
+            default_roles = [
+                ("admin", "Quản trị viên, toàn quyền quản lý hệ thống"),
+                ("editor", "Biên tập viên, quản lý nội dung POI"),
+            ]
+            role_records: dict[str, RoleRecord] = {}
+            for name, description in default_roles:
+                role = session.scalar(select(RoleRecord).where(RoleRecord.name == name))
+                if not role:
+                    role = RoleRecord(name=name, description=description)
+                    session.add(role)
+                role_records[name] = role
             for slug, label_vi, label_en in default_cats:
                 exists = session.scalar(select(CategoryRecord).where(CategoryRecord.slug == slug))
                 if not exists:
                     session.add(CategoryRecord(slug=slug, label_vi=label_vi, label_en=label_en))
+            session.flush()
+            for user in session.scalars(select(UserRecord)).all():
+                role = role_records.get(user.role)
+                if role and user.role_id != role.id:
+                    user.role_id = role.id
             session.commit()
 
     # ------------------------------------------------------------------
@@ -319,7 +376,29 @@ class PersistentStore:
         if not self.engine:
             return []
         with Session(self.engine) as session:
-            return [r.payload for r in session.scalars(select(PoiRecord)).all()]
+            records = session.scalars(select(PoiRecord)).all()
+            pois = []
+            for record in records:
+                payload = dict(record.payload)
+                translations = [
+                    {
+                        "language_code": translation.language_code,
+                        "name": translation.name,
+                        "description": translation.description,
+                        "narration_text": translation.narration_text,
+                    }
+                    for translation in record.translations
+                ]
+                if translations:
+                    payload["translations"] = translations
+                    vietnamese = next(
+                        (item for item in translations if item["language_code"] == "vi"),
+                        None,
+                    )
+                    if vietnamese:
+                        payload["translation"] = vietnamese
+                pois.append(payload)
+            return pois
 
     def save_poi(self, payload: dict[str, Any]) -> None:
         if not self.engine:
@@ -349,9 +428,17 @@ class PersistentStore:
                 session.add(record)
             session.flush()
 
-            # Sync bảng poi_translations
-            trans_data = payload.get("translation", {})
-            if trans_data:
+            # Sync bảng poi_translations without removing other languages.
+            translation_data = list(payload.get("translations", []))
+            primary_translation = payload.get("translation", {})
+            if primary_translation:
+                primary_language = primary_translation.get("language_code", "vi")
+                if not any(
+                    item.get("language_code", "vi") == primary_language
+                    for item in translation_data
+                ):
+                    translation_data.append(primary_translation)
+            for trans_data in translation_data:
                 lang = trans_data.get("language_code", "vi")
                 existing_trans = session.scalar(
                     select(PoiTranslationRecord).where(
@@ -430,6 +517,9 @@ class PersistentStore:
     def save_event(self, payload: dict[str, Any]) -> None:
         if not self.engine:
             return
+        created_at = payload.get("created_at", datetime.now(timezone.utc))
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
         with Session(self.engine) as session:
             session.add(
                 EventRecord(
@@ -441,6 +531,7 @@ class PersistentStore:
                     completed=payload.get("completed", False),
                     session_id=payload.get("session_id", "anonymous"),
                     payload=payload,
+                    created_at=created_at,
                 )
             )
             session.commit()
@@ -502,11 +593,13 @@ class PersistentStore:
         if not self.engine:
             return
         with Session(self.engine) as session:
+            role = session.scalar(select(RoleRecord).where(RoleRecord.name == payload["role"]))
             record = session.get(UserRecord, payload["id"])
             if record:
                 record.full_name = payload["full_name"]
                 record.email = payload["email"]
                 record.role = payload["role"]
+                record.role_id = role.id if role else None
                 record.password_hash = payload["password_hash"]
                 record.is_active = payload.get("is_active", True)
             else:
@@ -516,11 +609,114 @@ class PersistentStore:
                         full_name=payload["full_name"],
                         email=payload["email"],
                         role=payload["role"],
+                        role_id=role.id if role else None,
                         password_hash=payload["password_hash"],
                         is_active=payload.get("is_active", True),
                     )
                 )
             session.commit()
+
+    # ------------------------------------------------------------------
+    # Anonymous website visitor sessions
+    # ------------------------------------------------------------------
+
+    def record_visitor_heartbeat(self, payload: dict[str, Any]) -> None:
+        if not self.engine:
+            return
+        now = datetime.now(timezone.utc)
+        active_since = now - VISITOR_ACTIVE_WINDOW
+        with Session(self.engine) as session:
+            session.execute(
+                update(VisitorSessionRecord)
+                .where(VisitorSessionRecord.last_seen_at < active_since)
+                .values(is_active=False)
+            )
+            session.execute(
+                delete(VisitorSessionRecord).where(
+                    VisitorSessionRecord.last_seen_at < now - timedelta(days=30)
+                )
+            )
+            values = {
+                "device_id": payload["device_id"],
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "last_path": payload["path"],
+                "entry_source": payload["source"],
+                "is_active": True,
+            }
+            if self.engine.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+            elif self.engine.dialect.name == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+            else:
+                raise RuntimeError(
+                    f"Visitor session upsert is unsupported for {self.engine.dialect.name}"
+                )
+            statement = insert(VisitorSessionRecord).values(**values)
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[VisitorSessionRecord.device_id],
+                    set_={
+                        "last_seen_at": now,
+                        "last_path": payload["path"],
+                        "is_active": True,
+                    },
+                )
+            )
+            session.commit()
+
+    def list_visitor_sessions(self, limit: int = 100) -> list[dict[str, Any]]:
+        if not self.engine:
+            return []
+        active_since = datetime.now(timezone.utc) - VISITOR_ACTIVE_WINDOW
+        with Session(self.engine) as session:
+            session.execute(
+                update(VisitorSessionRecord)
+                .where(VisitorSessionRecord.last_seen_at < active_since)
+                .values(is_active=False)
+            )
+            session.execute(
+                delete(VisitorSessionRecord).where(
+                    VisitorSessionRecord.last_seen_at
+                    < datetime.now(timezone.utc) - timedelta(days=30)
+                )
+            )
+            session.commit()
+            records = session.scalars(
+                select(VisitorSessionRecord)
+                .order_by(VisitorSessionRecord.last_seen_at.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "device_id": record.device_id,
+                    "first_seen_at": record.first_seen_at.isoformat(),
+                    "last_seen_at": record.last_seen_at.isoformat(),
+                    "last_path": record.last_path,
+                    "entry_source": record.entry_source,
+                    "is_active": record.is_active,
+                }
+                for record in records
+            ]
+
+    def count_active_visitor_sessions(self) -> int:
+        if not self.engine:
+            return 0
+        from sqlalchemy import func
+
+        active_since = datetime.now(timezone.utc) - VISITOR_ACTIVE_WINDOW
+        with Session(self.engine) as session:
+            session.execute(
+                update(VisitorSessionRecord)
+                .where(VisitorSessionRecord.last_seen_at < active_since)
+                .values(is_active=False)
+            )
+            session.commit()
+            return session.scalar(
+                select(func.count())
+                .select_from(VisitorSessionRecord)
+                .where(VisitorSessionRecord.is_active.is_(True))
+            ) or 0
 
     # ------------------------------------------------------------------
     # Truy vấn thống kê chuẩn hóa (dùng cho dashboard ERD)
@@ -539,15 +735,75 @@ class PersistentStore:
             ).all()
             return {row.source: row.cnt for row in rows}
 
+    def analytics_narration_summary(self) -> dict[str, int]:
+        if not self.engine:
+            return {"total_plays": 0, "completed_plays": 0, "total_duration": 0}
+        from sqlalchemy import case, func
+
+        with Session(self.engine) as session:
+            row = session.execute(
+                select(
+                    func.count()
+                    .filter(EventRecord.event_type == "start")
+                    .label("total_plays"),
+                    func.count()
+                    .filter(EventRecord.completed.is_(True))
+                    .label("completed_plays"),
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (EventRecord.event_type == "finish", EventRecord.duration_seconds),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ).label("total_duration"),
+                )
+            ).one()
+            return {
+                "total_plays": row.total_plays,
+                "completed_plays": row.completed_plays,
+                "total_duration": row.total_duration,
+            }
+
+    def analytics_events_timeline(self, days: int = 7) -> list[dict[str, Any]]:
+        if not self.engine:
+            return []
+        from sqlalchemy import func
+
+        first_day = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(
+                    func.date(EventRecord.created_at).label("event_date"),
+                    func.count().label("plays"),
+                )
+                .where(
+                    EventRecord.event_type == "start",
+                    EventRecord.created_at >= datetime.combine(
+                        first_day, datetime.min.time(), timezone.utc
+                    ),
+                )
+                .group_by(func.date(EventRecord.created_at))
+            ).all()
+        totals = {str(row.event_date): row.plays for row in rows}
+        return [
+            {
+                "date": (first_day + timedelta(days=offset)).isoformat(),
+                "plays": totals.get((first_day + timedelta(days=offset)).isoformat(), 0),
+            }
+            for offset in range(days)
+        ]
+
     def analytics_top_pois(self, limit: int = 5) -> list[dict[str, Any]]:
-        """Top POI theo lượt hoàn thành từ bảng narration_events."""
+        """Top POI theo lượt bắt đầu thuyết minh từ bảng narration_events."""
         if not self.engine:
             return []
         from sqlalchemy import func
         with Session(self.engine) as session:
             rows = session.execute(
                 select(EventRecord.poi_id, func.count().label("plays"))
-                .where(EventRecord.completed == True)  # noqa: E712
+                .where(EventRecord.event_type == "start")
                 .group_by(EventRecord.poi_id)
                 .order_by(func.count().desc())
                 .limit(limit)
